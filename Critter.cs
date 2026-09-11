@@ -15,13 +15,13 @@ namespace StoreChase
         private GridPos _from;
         private GridPos _to;
         private float _t;
-        private float _moveSpeed = 3.5f; // slightly slower than player by default
+        private float _moveSpeed = 4.5f; // slightly slower than player by default
 
         private readonly Random _rng = new();
         private float _decisionCooldown = 0f;
 
         // How close (in tiles) the player has to be before the critter flees
-        private const int FleeRadius = 5;
+        private const int FleeRadius = 6;
 
         public Critter(GridPos start, int cellSize)
         {

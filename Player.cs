@@ -14,7 +14,7 @@ namespace StoreChase
         private GridPos _from;
         private GridPos _to;
         private float _t; // 0..1 progress between _from and _to
-        private const float MoveSpeed = 4.5f; // tiles per second
+        private const float MoveSpeed = 4.7f; // tiles per second
 
         private Point _heldDirection = Point.Zero;
 
