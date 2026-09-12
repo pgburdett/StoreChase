@@ -68,8 +68,8 @@ namespace StoreChase
         {
             _map = new GridMap();
 
-            _graphics.PreferredBackBufferWidth = 1024;
-            _graphics.PreferredBackBufferHeight = 768;
+            _graphics.PreferredBackBufferWidth = 1600;
+            _graphics.PreferredBackBufferHeight = 1200;
             _graphics.ApplyChanges();
 
             _player = new Player(new GridPos(1, 1), CellSize);

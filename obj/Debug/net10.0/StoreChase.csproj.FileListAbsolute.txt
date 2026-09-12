@@ -38,3 +38,5 @@
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.mtl
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.obj
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat_diffuse.jpg
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend1
