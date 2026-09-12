@@ -11,10 +11,16 @@ namespace StoreChase
         public Vector3 WorldPos { get; private set; }
         public bool Caught { get; private set; }
 
+        // Facing direction in radians, for orienting the cat model to face
+        // its direction of travel (Y-axis rotation, since it moves on the
+        // XZ plane). 0 = facing +Z; adjust ModelFacingOffset in Game1 if the
+        // source model's "forward" axis doesn't match that.
+        public float FacingAngle { get; private set; }
+
         private GridPos _from;
         private GridPos _to;
         private float _t;
-        private float _moveSpeed = 4.5f;
+        private float _moveSpeed = 3.5f;
 
         private readonly Random _rng = new();
 
@@ -85,6 +91,13 @@ namespace StoreChase
                 Vector3 fromPos = new(_from.X * cellSize, 0f, _from.Y * cellSize);
                 Vector3 toPos = new(_to.X * cellSize, 0f, _to.Y * cellSize);
                 WorldPos = Vector3.Lerp(fromPos, toPos, _t);
+
+                // Face the direction of travel. Only update when actually
+                // moving somewhere (toPos != fromPos) so it doesn't snap to
+                // some default angle when idle between moves.
+                Vector3 delta = toPos - fromPos;
+                if (delta.LengthSquared() > 0.0001f)
+                    FacingAngle = (float)Math.Atan2(delta.X, delta.Z);
 
                 if (_t >= 1f)
                 {

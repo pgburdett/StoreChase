@@ -14,4 +14,16 @@
   <ItemGroup>
     <MonoGameContentReference Include="Content\Content.mgcb" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The cat model files are loaded at runtime by ObjLoader.cs, not
+         through the MGCB content pipeline (see ObjLoader.cs for why).
+         Because of that, MSBuild has no reason to know about them unless
+         told explicitly — this copies them to the output directory
+         alongside the compiled game so File.ReadLines/File.OpenRead in
+         ObjLoader can find them at their expected relative path. -->
+    <None Include="Content\Models\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

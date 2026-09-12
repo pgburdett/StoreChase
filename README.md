@@ -97,6 +97,79 @@ per the earlier setup.)
   against the previous frame's value, since MonoGame reports it as a
   cumulative total rather than a per-frame delta.
 
+## Cat model (replaces the procedural critter cube)
+
+The critter is now the uploaded cat OBJ (`Content/Models/Cat.obj`,
+35,290 vertices, single material, quad faces) instead of an orange cube,
+loaded and rendered at runtime.
+
+**Why runtime loading instead of the MGCB content pipeline**: this OBJ
+uses quad faces and a specific 3ds-Max-export layout. Rather than depend on
+MGCB's built-in model importer handling that correctly, `ObjLoader.cs` is a
+small hand-written parser — it reads `v`/`vt`/`vn`/`f` lines, triangulates
+each quad into two triangles, dedupes shared vertex corners, and pulls the
+diffuse texture filename out of the referenced `.mtl`. It's deliberately
+narrow: single material, no n-gons beyond quads, assumes vt/vn are present
+for every vertex. If you ever load a different OBJ and it doesn't work,
+that's the first place to check.
+
+**Getting the orientation right wasn't a guess** — the raw OBJ's axes don't
+match MonoGame's, and rather than assume a convention, the actual vertex
+data was inspected to confirm it:
+- X (±6.3 units) — narrow, left/right width.
+- Y (-22.3 to 38.6, the largest extent) — nose-to-tail axis. Confirmed by
+  checking vertex density at each end: the Y-minimum end has ~9,200 nearby
+  vertices in a wide (6.4×7.5 unit) cluster (the body/head), while the
+  Y-maximum end has only ~250 vertices in a narrow (2.0×2.5 unit) cluster
+  (the tail tip). Head is at Y-minimum.
+- Z (0.01 to 37.6) — vertical/height axis. Confirmed by checking that
+  paw-height vertices (near Z=0) span nearly the model's full Y range
+  (front and back paws both near the ground), and that near the head end
+  (low Y), Z ranges 18–35 — consistent with a standing/crouching pose,
+  head held up off the ground.
+
+`BuildCritterModelTransform()` in `Game1.cs` uses this to build one
+transform: center on X/Z, rotate -90° around X (maps old Z-up to new
+Y-up), scale to fit one grid cell's height, then lift so the paws land on
+Y=0. Each step was traced numerically with real coordinates (not just
+reasoned about) to confirm: a paw vertex ends up exactly at Y=0, and a
+nose vertex ends up at positive Z — which is why `Critter.FacingAngle = 0`
+(computed from direction of travel) correctly means "facing +Z" and the
+model rotates via `Matrix.CreateRotationY(FacingAngle)` to face wherever
+it's currently moving.
+
+**What's NOT wired up**: `Cat_bump.jpg` (the bump/normal map) is copied
+into `Content/Models/` but never loaded or used. `BasicEffect` doesn't
+support normal mapping — that needs a custom shader (`Effect`/HLSL) with a
+normal-mapping technique, which is a meaningfully bigger addition than
+anything else here. The cat currently renders with diffuse texture +
+`BasicEffect`'s default directional lighting only, no surface bump detail.
+
+**Static pose, animation-ready structure**: this OBJ has no skeleton/bones
+(OBJ format doesn't support that) — it's one fixed pose that translates,
+rotates, and scales as a rigid whole. `StaticMesh` intentionally stores
+just geometry with no baked-in transform, so a future animated model
+(glTF or FBX with bones, needing a different loader entirely) could
+replace it without restructuring how `Critter`/`Game1` consume a mesh —
+both already work in terms of "a mesh, a per-frame world transform," which
+is the same shape an animated skeletal mesh needs, just computed via bone
+matrices instead of one static transform.
+
+**Known rough edges**:
+- No mipmapping/texture filtering tuning — large diffuse texture (346KB
+  JPG) at a small on-screen size (cat fills less than one grid cell) may
+  show some aliasing/shimmer, especially if the camera tilts to a shallow
+  angle. Enabling `SamplerState.AnisotropicClamp` on the graphics device
+  before drawing the cat would likely help if you notice this.
+- `ObjLoader` uses `short` indices, capped at 65,535 unique vertices. This
+  model's ~35K vertices fit comfortably, but a denser model would need
+  switching to `int` indices and `DrawUserIndexedPrimitives`'s 32-bit
+  overload.
+- The critter's collision/catch logic still operates purely on grid cells
+  (`Critter.Cell`), unaffected by the visual model swap — catching the cat
+  still means landing on the same tile, regardless of the model's visual
+  footprint being smaller than a full cell.
+
 ## Critter AI
 
 Two awareness tiers instead of one flat flee radius:
