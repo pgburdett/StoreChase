@@ -90,6 +90,45 @@ namespace StoreChase
 
             return step;
         }
+
+        // Full BFS distance map from `origin`, following walls (unlike
+        // Manhattan distance, this won't think a tile is "close" if it's
+        // actually on the other side of a shelf). Unreachable tiles get
+        // int.MaxValue. Used by the critter AI to judge how good an escape
+        // tile actually is once shelves are in the way.
+        public int[,] DistanceMapFrom(GridPos origin)
+        {
+            var dist = new int[Width, Height];
+            for (int x = 0; x < Width; x++)
+                for (int y = 0; y < Height; y++)
+                    dist[x, y] = int.MaxValue;
+
+            if (!IsWalkable(origin.X, origin.Y)) return dist;
+
+            var queue = new Queue<GridPos>();
+            dist[origin.X, origin.Y] = 0;
+            queue.Enqueue(origin);
+
+            GridPos[] dirs = { new(0, -1), new(0, 1), new(-1, 0), new(1, 0) };
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                int currentDist = dist[current.X, current.Y];
+
+                foreach (var d in dirs)
+                {
+                    var next = new GridPos(current.X + d.X, current.Y + d.Y);
+                    if (!IsWalkable(next.X, next.Y)) continue;
+                    if (dist[next.X, next.Y] != int.MaxValue) continue;
+
+                    dist[next.X, next.Y] = currentDist + 1;
+                    queue.Enqueue(next);
+                }
+            }
+
+            return dist;
+        }
     }
 
     public readonly struct GridPos
