@@ -5,7 +5,7 @@ namespace StoreChase
 {
     // Builds a unit cube (1x1x1, centered on origin in X/Z, sitting on Y=0)
     // as a VertexPositionNormalColor array. Scale it via the world matrix.
-    // No external model files needed — this is the whole "3D model".
+    
     public static class CubeMesh
     {
         public static VertexPositionNormalColor[] Build(Color color)

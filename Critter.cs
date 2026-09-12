@@ -20,7 +20,7 @@ namespace StoreChase
         private GridPos _from;
         private GridPos _to;
         private float _t;
-        private float _moveSpeed = 3.5f;
+        private float _moveSpeed = 4.5f;
 
         private readonly Random _rng = new();
 
