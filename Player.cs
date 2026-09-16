@@ -1,10 +1,10 @@
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Input;
 
 namespace StoreChase
 {
     // Same grid-locked movement as the 2D version. Only the coordinate
-    // mapping changes: X/Y grid -> X/Z world (Y is "up" in 3D).
+    // mapping changes: X/Y grid -> X/Z world (Y is "up" in 3D). Input arrives
+    // as an abstracted InputState — no device APIs here.
     public class Player
     {
         public GridPos Cell { get; private set; }
@@ -25,9 +25,12 @@ namespace StoreChase
             WorldPos = new Vector3(start.X * cellSize, 0f, start.Y * cellSize);
         }
 
-        public void Update(GameTime gameTime, GridMap map, float cellSize)
+        public void Update(GameTime gameTime, GridMap map, float cellSize, in InputState input)
         {
-            ReadInput();
+            // Only update the held direction when the device reports one, so
+            // releasing mid-tile keeps the existing grid-movement feel.
+            if (input.Move != Vector2.Zero)
+                _heldDirection = new Point((int)input.Move.X, (int)input.Move.Y);
 
             bool moving = _t < 1f;
 
@@ -56,15 +59,6 @@ namespace StoreChase
 
                 if (_t >= 1f) Cell = _to;
             }
-        }
-
-        private void ReadInput()
-        {
-            var kb = Keyboard.GetState();
-            if (kb.IsKeyDown(Keys.Up) || kb.IsKeyDown(Keys.W)) _heldDirection = new Point(0, -1);
-            else if (kb.IsKeyDown(Keys.Down) || kb.IsKeyDown(Keys.S)) _heldDirection = new Point(0, 1);
-            else if (kb.IsKeyDown(Keys.Left) || kb.IsKeyDown(Keys.A)) _heldDirection = new Point(-1, 0);
-            else if (kb.IsKeyDown(Keys.Right) || kb.IsKeyDown(Keys.D)) _heldDirection = new Point(1, 0);
         }
     }
 }

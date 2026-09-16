@@ -1,0 +1,9 @@
+# Build outputs
+bin/
+obj/
+Content/bin/
+Content/obj/
+
+# IDE / editor
+.vs/
+.vscode/

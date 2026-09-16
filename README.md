@@ -1,20 +1,24 @@
 # Store Chase 3D — MonoGame Top-Down (Orthographic)
 
-Same maze, movement, and AI as the 2D version — swapped to a real 3D scene
-viewed straight down, with cube "models" (blue = you, orange = critter,
-brown = shelves).
+A small grid-based chase game in a 3D scene viewed from above: you (blue cube)
+hunt the cat through store shelves. Everything visual is either procedural
+geometry or a runtime-loaded OBJ — no external scene assets.
 
 ## Run it
 
-Same as before:
 ```
 dotnet restore
 dotnet run
 ```
-(If you haven't already: `dotnet tool install dotnet-mgcb` from a manifest,
-per the earlier setup.)
+The content pipeline runs automatically on build. To edit content with the
+MGCB CLI instead, `dotnet tool restore` (pins `dotnet-mgcb`) then use `mgcb`.
 
 ## Controls
+
+Keyboard/mouse and gamepad are both supported and **auto-detected** — whichever
+device you use last becomes active (see Input below).
+
+Keyboard / mouse:
 - Arrow keys / WASD: move the player
 - I / J / K / L: pan the camera (up/left/down/right)
 - U / O: tilt the camera down/up
@@ -22,206 +26,199 @@ per the earlier setup.)
 - Escape: quit
 - R: restart, once you've caught the critter
 
-## What changed from the 2D version
+Gamepad:
+- Left stick / D-pad: move
+- Right stick: pan the camera
+- Triggers (RT/LT): tilt
+- Shoulders (RB/LB): zoom
+- Start: restart
+- Back: quit
 
-- **GridMap.cs** — untouched. It's pure grid logic (walkable/BFS), no
-  rendering dependency, so it ported over as-is.
-- **Player.cs / Critter.cs** — same movement/AI logic, just exposing
-  `Vector3 WorldPos` (X/Z plane, Y=0) instead of `Vector2 PixelPos`, and no
-  `Draw` method — Game1 now owns all rendering since it's managing the 3D
-  pipeline.
-- **CubeMesh.cs** (new) — builds cube and floor-quad geometry by hand as
-  `VertexPositionNormalColor` arrays. This *is* the "just squares for
-  models" approach: no external 3D model files, no content pipeline model
-  loading — just procedural geometry. A custom vertex type was needed
-  because MonoGame doesn't ship a Position+Normal+Color struct out of the
-  box (Normal is required for lighting).
-- **Game1.cs** — the real work:
-  - `SetupCamera()`: `Matrix.CreateOrthographic` for a true top-down view
-    with no perspective distortion (per your choice), positioned above the
-    map's center looking straight down.
-  - `BasicEffect` with `LightingEnabled = true` and
-    `EnableDefaultLighting()` so the cubes actually shade like 3D objects
-    instead of flat colored squares — you'll see the top faces lit
-    differently than the sides.
-  - Walls are drawn as scaled-up cubes (taller than wide) so they read as
-    "shelves" from directly above; floor is one big flat quad under
-    everything.
-  - `DrawUserPrimitives` is used instead of index/vertex buffers — simplest
-    approach for a small number of objects; fine for this scale, but if you
-    add hundreds of wall tiles later, batching or instancing would help
-    perf.
+## Architecture at a glance
 
-## Things you'll likely want to tweak
+- `Program.cs` → `Game1.cs` (all rendering + orchestration). Gameplay files
+  are top-level `.cs` files, namespace `StoreChase`.
+- `GridMap.cs` — pure grid logic (walkable/BFS: `NextStepToward`,
+  `DistanceMapFrom`). `GridPos` lives in the same file. Map layout is a
+  hardcoded string array, **18×12**.
+- `Player.cs` / `Critter.cs` — grid-locked movement. They expose `Vector3
+  WorldPos` (X/Z plane, Y=0) and have **no `Draw` method**; `Game1` owns all
+  rendering. World space is X/Z with Y = up; `Game1.CellSize = 2f` world units
+  per grid cell.
+- `Camera.cs` — camera state and controls (extracted out of `Game1`, see below).
+- Input, events, and the title each have their own small subsystem; see the
+  sections below.
 
-1. **Camera height/framing** — `SetupCamera()` positions the camera 30
-   units up and the orthographic view size is map size + padding. If the
-   maze looks too small/large on screen, adjust the `+ CellSize * 2`
-   padding or the camera height.
+## Content & assets
 
-2. **Wall height** — currently `CellSize * 1.5f` tall. Since it's a true
-   top-down orthographic view, taller walls won't visually occlude more of
-   the floor behind them the way they would in a perspective camera — so
-   height mostly matters if you ever add a slight camera tilt later.
+- The MGCB content pipeline (`Content/Content.mgcb`) builds only
+  `Content/DefaultFont.spritefont` (UI text, currently `DejaVu Sans`). If the
+  build fails with "font not found" on another machine, change `<FontName>` to
+  an installed font and rebuild.
+- The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg` — is
+  loaded **at runtime** by `ObjLoader.cs`, NOT through MGCB. `StoreChase.csproj`
+  copies `Content\Models\**` to the output dir, so new model files just need to
+  land under `Content/Models`.
+- `ObjLoader` is deliberately narrow: single material, quad faces, `vt`/`vn`
+  assumed present; uses `short` indices (~35K verts fits, cap is 65,535).
+- `CubeMesh.cs` builds cube/floor geometry by hand as `VertexPositionNormalColor`
+  (a custom vertex type — MonoGame ships no Position+Normal+Color struct, and
+  Normal is required for `BasicEffect` lighting). `Game1` draws these with
+  `DrawUserPrimitives`.
 
-3. **No textures** — literally flat-colored cube faces via vertex color.
-   If you want texture-mapped cubes later, that's a bigger jump: UV
-   coordinates on the vertex type, a `Texture2D` loaded via content
-   pipeline, and `_effect.TextureEnabled = true`.
+## Camera
 
-4. **No font**, same as before — UI is a colored dot. See the note in
-   `Game1.LoadContent()`/`DrawUiOverlay()` for how to wire up a
-   SpriteFont for real text (timer, win message).
+`Camera.cs` is the single source of truth for pan, zoom, and tilt. `Game1`
+constructs it in `SetupCamera()` and calls `Camera.Update(gameTime, input)`.
 
-5. **Straight-down only** — you picked orthographic/no-tilt. If you
-   later want a slight angle for more depth perception, that's a small
-   change: adjust the camera's Y offset to include some Z/X offset too,
-   and switch `CreateOrthographic` to `CreatePerspectiveFieldOfView` if you
-   want actual perspective distortion instead of an angled orthographic.
+- Pan (`_panOffset`, world units) is clamped to `mapSize * 0.75` so you can't
+  drift far from the store. Pan speed scales with zoom.
+- Zoom is expressed as camera *distance* in both modes, so it feels continuous
+  across the tilt transition. Zoom 1.0 is standard; smaller = closer,
+  larger = farther. Clamped `MinZoom` 0.25 to `MaxZoom` 2.5.
+- Tilt goes 0 → `MaxTiltDegrees` (80). At tilt ≈ 0 the camera sits directly
+  above the look-at point and uses `Matrix.CreateOrthographic` (no perspective
+  distortion). Once tilted at all it swings back along +Z, pivoting around the
+  look-at point, and switches to `Matrix.CreatePerspectiveFieldOfView` (50°).
+- **Known seam**: the view matrix's "up" vector has to flip from `Forward`
+  (only valid at tilt=0, where the look direction is parallel to world Up) to
+  world `Up` (any nonzero tilt). This causes a one-frame roll snap right at the
+  0°/1° boundary. Brief and easy to miss, but visible if you linger at exactly
+  that boundary; smoothing would mean blending up vectors across a small range.
 
-## Camera controls (pan/zoom)
+## Cat model
 
-- `_cameraPanOffset` (Vector2, world units) shifts where the camera looks,
-  applied on top of the map's center. I/J/K/L adjust it each frame in
-  `UpdateCameraControls()`.
-- `_zoom` scales the orthographic view size passed to
-  `Matrix.CreateOrthographic` — smaller view size = more zoomed in. Clamped
-  between `MinZoom` (0.25, close up) and `MaxZoom` (2.5, zoomed way out) so
-  you can't zoom through the floor or out to nothing.
-- Panning is clamped to `mapSize * 0.75` in each direction so you can't
-  drift the camera arbitrarily far from the store.
-- Pan speed scales with current zoom (`PanSpeed * _zoom`) so panning feels
-  similarly fast whether you're zoomed in or out — otherwise panning while
-  zoomed in would feel sluggish relative to the visible area.
-- Mouse wheel delta is computed by diffing `Mouse.GetState().ScrollWheelValue`
-  against the previous frame's value, since MonoGame reports it as a
-  cumulative total rather than a per-frame delta.
+The critter is the uploaded cat OBJ (`Content/Models/Cat.obj`, single material,
+quad faces), loaded and rendered at runtime rather than through MGCB.
 
-## Cat model (replaces the procedural critter cube)
-
-The critter is now the uploaded cat OBJ (`Content/Models/Cat.obj`,
-35,290 vertices, single material, quad faces) instead of an orange cube,
-loaded and rendered at runtime.
-
-**Why runtime loading instead of the MGCB content pipeline**: this OBJ
-uses quad faces and a specific 3ds-Max-export layout. Rather than depend on
-MGCB's built-in model importer handling that correctly, `ObjLoader.cs` is a
-small hand-written parser — it reads `v`/`vt`/`vn`/`f` lines, triangulates
-each quad into two triangles, dedupes shared vertex corners, and pulls the
-diffuse texture filename out of the referenced `.mtl`. It's deliberately
-narrow: single material, no n-gons beyond quads, assumes vt/vn are present
-for every vertex. If you ever load a different OBJ and it doesn't work,
-that's the first place to check.
+**Why runtime loading** instead of the content pipeline: the OBJ uses quad
+faces and a specific 3ds-Max-export layout. Rather than depend on MGCB's model
+importer handling that correctly, `ObjLoader.cs` is a small hand-written parser
+that reads `v`/`vt`/`vn`/`f`, fan-triangulates faces, dedupes shared corners,
+and pulls the diffuse filename out of the referenced `.mtl`.
 
 **Getting the orientation right wasn't a guess** — the raw OBJ's axes don't
-match MonoGame's, and rather than assume a convention, the actual vertex
-data was inspected to confirm it:
+match MonoGame's, so the actual vertex data was inspected to confirm it:
 - X (±6.3 units) — narrow, left/right width.
 - Y (-22.3 to 38.6, the largest extent) — nose-to-tail axis. Confirmed by
   checking vertex density at each end: the Y-minimum end has ~9,200 nearby
   vertices in a wide (6.4×7.5 unit) cluster (the body/head), while the
-  Y-maximum end has only ~250 vertices in a narrow (2.0×2.5 unit) cluster
-  (the tail tip). Head is at Y-minimum.
+  Y-maximum end has only ~250 vertices in a narrow (2.0×2.5 unit) cluster (the
+  tail tip). Head is at Y-minimum.
 - Z (0.01 to 37.6) — vertical/height axis. Confirmed by checking that
-  paw-height vertices (near Z=0) span nearly the model's full Y range
-  (front and back paws both near the ground), and that near the head end
-  (low Y), Z ranges 18–35 — consistent with a standing/crouching pose,
+  paw-height vertices (near Z=0) span nearly the model's full Y range, and that
+  near the head end (low Y), Z ranges 18–35 — consistent with a standing pose,
   head held up off the ground.
 
-`BuildCritterModelTransform()` in `Game1.cs` uses this to build one
-transform: center on X/Z, rotate -90° around X (maps old Z-up to new
-Y-up), scale to fit one grid cell's height, then lift so the paws land on
-Y=0. Each step was traced numerically with real coordinates (not just
-reasoned about) to confirm: a paw vertex ends up exactly at Y=0, and a
-nose vertex ends up at positive Z — which is why `Critter.FacingAngle = 0`
-(computed from direction of travel) correctly means "facing +Z" and the
-model rotates via `Matrix.CreateRotationY(FacingAngle)` to face wherever
-it's currently moving.
+`BuildCritterModelTransform()` in `Game1.cs` uses this to build one transform:
+center on X/Z, rotate -90° around X (maps old Z-up to new Y-up), scale to fit
+one grid cell's height, then lift so the paws land on Y=0. Each step was traced
+numerically with real coordinates, so `Critter.FacingAngle = 0` correctly means
+"facing +Z" and the model rotates via `Matrix.CreateRotationY(FacingAngle)`.
 
-**What's NOT wired up**: `Cat_bump.jpg` (the bump/normal map) is copied
-into `Content/Models/` but never loaded or used. `BasicEffect` doesn't
-support normal mapping — that needs a custom shader (`Effect`/HLSL) with a
-normal-mapping technique, which is a meaningfully bigger addition than
-anything else here. The cat currently renders with diffuse texture +
-`BasicEffect`'s default directional lighting only, no surface bump detail.
+**Not wired up**: `Cat_bump.jpg` is copied into `Content/Models/` but never
+loaded. `BasicEffect` doesn't support normal mapping — that needs a custom
+shader. The cat renders with diffuse texture + default directional lighting only.
 
-**Static pose, animation-ready structure**: this OBJ has no skeleton/bones
-(OBJ format doesn't support that) — it's one fixed pose that translates,
-rotates, and scales as a rigid whole. `StaticMesh` intentionally stores
-just geometry with no baked-in transform, so a future animated model
-(glTF or FBX with bones, needing a different loader entirely) could
-replace it without restructuring how `Critter`/`Game1` consume a mesh —
-both already work in terms of "a mesh, a per-frame world transform," which
-is the same shape an animated skeletal mesh needs, just computed via bone
-matrices instead of one static transform.
+**Static pose, animation-ready**: OBJ has no skeleton/bones, so this is one
+fixed pose translated/rotated/scaled as a rigid whole. `StaticMesh` stores only
+geometry, so a future animated mesh (glTF/FBX with bones) could replace it
+without restructuring how `Critter`/`Game1` consume a mesh.
 
 **Known rough edges**:
-- No mipmapping/texture filtering tuning — large diffuse texture (346KB
-  JPG) at a small on-screen size (cat fills less than one grid cell) may
-  show some aliasing/shimmer, especially if the camera tilts to a shallow
-  angle. Enabling `SamplerState.AnisotropicClamp` on the graphics device
-  before drawing the cat would likely help if you notice this.
-- `ObjLoader` uses `short` indices, capped at 65,535 unique vertices. This
-  model's ~35K vertices fit comfortably, but a denser model would need
-  switching to `int` indices and `DrawUserIndexedPrimitives`'s 32-bit
-  overload.
-- The critter's collision/catch logic still operates purely on grid cells
-  (`Critter.Cell`), unaffected by the visual model swap — catching the cat
-  still means landing on the same tile, regardless of the model's visual
-  footprint being smaller than a full cell.
+- No mipmapping/sampler tuning — the 346KB diffuse at a small on-screen size can
+  alias; `SamplerState.AnisotropicClamp` before drawing the cat would help.
+- `ObjLoader` uses `short` indices; a denser model would need `int` indices and
+  `DrawUserIndexedPrimitives`'s 32-bit overload.
+- Collision/catch is purely grid-cell based (`Critter.Cell`), unaffected by the
+  visual model footprint.
 
 ## Critter AI
 
-Two awareness tiers instead of one flat flee radius:
+The AI is split behind an interface: `ICritterAI.cs` defines `CritterContext`
+(a `record struct`) and `DecideNextMove`; `SmartAnimalAI.cs` implements the
+behavior. `Critter.cs` handles movement/catch and calls the injected AI —
+`Game1` constructs it as `new Critter(pos, CellSize, new SmartAnimalAI())`.
 
-- **Alert** (within 8 tiles): the critter starts drifting away using a
-  quick Manhattan-distance check on its immediate neighbors — casual, not
-  committed to a route. This is what makes it seem to notice you coming
-  before you're right on top of it.
-- **Flee** (within 4 tiles): the critter does a real escape plan. It runs
-  `GridMap.DistanceMapFrom` (a full BFS distance map, so it respects walls
-  rather than judging distance as the crow flies) from both itself and the
-  player, scores every reachable tile within 6 steps by "how far from the
-  player, penalized for how far out of the way it is to reach," and paths
-  to the best one via `GridMap.NextStepToward`. It re-plans every 0.6s
-  rather than every tile, so it commits to a route instead of twitching
-  tile-to-tile.
-- **Quirks**: 20% chance per flee decision to ignore the plan and either
-  double back through the tile it just came from, or sidestep
-  perpendicular to the escape direction — both deliberately suboptimal, so
-  it doesn't read as a perfect pathfinding bot. The abandoned plan gets
-  rebuilt next tick.
+`SmartAnimalAI` has three distance-based tiers (tunables are the public
+properties at the top of `SmartAnimalAI.cs`, **not** in `Critter.cs`):
 
-Tunable constants are all at the top of `Critter.cs`: `AlertRadius`,
-`FleeRadius`, `ReplanInterval`, `QuirkChance`. Turning `QuirkChance` down to
-0 gives you a "serious" critter that always takes the optimal escape route;
-turning it up makes it feel more erratic/animal-like (and easier to corner,
-since it'll sometimes dodge into a dead end).
+- **Alert** (within `AlertRadius` = 8): drifts away using a quick
+  Manhattan-distance check on immediate neighbors — casual, not committed.
+- **Flee** (within `FleeRadius` = 4): builds a real escape plan. Runs
+  `GridMap.DistanceMapFrom` (wall-respecting BFS) from both itself and the
+  player, scores reachable tiles by "how far from the player, penalized for
+  detour distance," and paths to the best via `GridMap.NextStepToward`.
+- **Wander** (otherwise): random walkable steps.
 
-**Cost note**: each re-plan does two full-grid BFS scans. Trivial at this
-map's size (19×12), but if you significantly scale up the maze, consider
-increasing `ReplanInterval` or caching one of the two distance maps.
+`QuirkChance` (20%) is meant to make the critter occasionally double back or
+sidestep. Note: `ChooseQuirkMove` is currently a **stub that returns null**, so
+quirks don't actually fire yet — the roll just costs it a frame. `_lastCell`
+(and its build warning) is the leftover intended for this.
 
-- `_tiltDegrees` (0 to `MaxTiltDegrees` = 80) drives both the camera's
-  position and which projection is used. U tilts down toward 0 (flat
-  top-down), O tilts up toward 80 (near-horizontal, angled view).
-- At tilt ≈ 0, the camera sits directly above the look-at point and uses
-  `Matrix.CreateOrthographic` — identical to the original straight-down
-  view, no perspective distortion.
-- Once tilted at all, the camera swings back along +Z (pivoting around the
-  look-at point, distance controlled by `baseDistance` = zoom) and the
-  projection switches to `Matrix.CreatePerspectiveFieldOfView` with a fixed
-  50° FOV, so distant objects appear smaller — real depth perception,
-  at the cost of the flat, distortion-free look.
-- Zoom (`_zoom`) is expressed as camera *distance* in both modes now,
-  rather than orthographic view size — this keeps zoom behavior roughly
-  consistent whether you're flat or tilted, since a perspective camera
-  doesn't have a "view size" to shrink the way an orthographic one does.
-- **Known seam**: the view matrix's "up" vector has to flip from `Forward`
-  (used only at tilt=0, since the look direction is otherwise parallel to
-  world Up) to world `Up` (used for any nonzero tilt) — this causes a
-  one-frame snap in camera roll right at the 0°/1° boundary. It's brief and
-  easy to miss during normal use, but if you build something that lingers
-  exactly at that boundary (e.g. an animated tilt reset), you'll see it.
-  Smoothing this out would mean blending the up vector across a small tilt
-  range instead of switching it outright.
+Tunables: `ReplanInterval`, `AlertRadius`, `FleeRadius`, `QuirkChance`.
+`ReplanInterval` is currently not enforced the way the name implies:
+`DecideNextMove` follows a planned path to completion and replans the moment it
+empties, so pacing is effectively "per finished path" rather than per 0.6s.
+
+**Cost note**: each re-plan does two full-grid BFS scans. Trivial at this map
+size, but if you scale the maze up, increase `ReplanInterval` or cache one map.
+
+## Input
+
+All device input goes through a small abstraction so gameplay never touches the
+device APIs:
+
+- `InputState.cs` — a per-frame, device-agnostic snapshot: `Move`, `CameraPan`,
+  `Tilt`, `Zoom`, `Restart`, `Exit`, plus `HasActivity`.
+- `IInputSource.cs` — one physical device. `InputDeviceKind` (`KeyboardMouse`,
+  `GamePad`) tells the rest of the game what the player is using.
+- `KeyboardMouseInput.cs` / `GamePadInput.cs` — the **only** files allowed to
+  call `Keyboard`/`Mouse`/`GamePad`.
+- `InputSystem.cs` — polls every source each frame (so per-device deltas like
+  the mouse wheel stay current) and exposes the active device's state as
+  `State`. The active device is auto-detected: the current source keeps control
+  while it has input, otherwise the first other source with input takes over.
+  `ActiveDevice`/`ActiveSource` expose the current one.
+
+`Player.Update` and `Camera.Update` take `in InputState`; add a new
+`IInputSource` (and register it in `Game1.Initialize`) rather than reading
+devices from gameplay code.
+
+## Events
+
+`EventSystem.cs` is a thread-safe pub/sub singleton (`EventSystem.Instance`).
+Concrete events subclass `BaseEvent`:
+
+- `GameStartedEvent` — published on initial startup and each restart.
+- `GameWonEvent` — published when the critter is caught; carries `ElapsedTime`.
+
+`Game1` publishes these. `RunStats.cs` subscribes and logs a win summary to the
+console (win count, run count, best time). It isn't stored on `Game1` — the
+singleton's handler list keeps it rooted. Add new events as `sealed` subclasses
+of `BaseEvent` and publish via `EventSystem.Instance.Publish`.
+
+## Rainbow title
+
+`RainbowTitle.cs` drives the centered "Store Chase" title. Its hue phase is
+advanced on a **background thread** (requested), while `Game1.DrawRainbowTitle`
+only reads `Phase` and draws each glyph with a per-character hue offset for the
+rainbow gradient. Keep all graphics work on the game thread — `SpriteBatch` and
+`GraphicsDevice` are not thread-safe. `Game1.UnloadContent()` disposes the
+title's thread.
+
+## HUD
+
+The top of the screen shows the animated title, a small status indicator
+(gray = chasing, green = caught), and the elapsed-time / win text rendered with
+the `DefaultFont` SpriteFont.
+
+## Things you'll likely want to tweak
+
+1. **Camera height/framing** — orthographic width/height is map size plus
+   `CellSize * 2` padding, scaled by zoom; adjust in `Camera.UpdateCameraMatrices`.
+2. **Wall height** — currently `CellSize * 1.5f`. In a true top-down orthographic
+   view taller walls don't occlude more floor, so height mostly matters if you
+   tilt.
+3. **No textures on the cubes** — flat vertex color. Texture-mapping them is a
+   bigger jump (UVs on the vertex type, `Texture2D`, `_effect.TextureEnabled`).

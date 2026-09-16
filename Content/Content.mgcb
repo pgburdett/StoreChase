@@ -10,3 +10,10 @@
 #-------------------------------- References --------------------------------#
 
 #---------------------------------- Content ----------------------------------#
+
+#begin DefaultFont.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Compressed
+/build:DefaultFont.spritefont

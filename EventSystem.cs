@@ -2,9 +2,28 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+namespace StoreChase;
+
 public abstract class BaseEvent
 {
     public DateTime Timestamp { get; } = DateTime.Now;
+}
+
+// Published once when a run begins — on initial startup and on every restart.
+public sealed class GameStartedEvent : BaseEvent
+{
+}
+
+// Published when the player catches the critter. Carries the final time so
+// subscribers (e.g. RunStats) don't have to reach back into Game1 for it.
+public sealed class GameWonEvent : BaseEvent
+{
+    public float ElapsedTime { get; }
+
+    public GameWonEvent(float elapsedTime)
+    {
+        ElapsedTime = elapsedTime;
+    }
 }
 
 public class EventSystem
@@ -68,8 +87,10 @@ public class EventSystem
             Type eventType = typeof(TEvent);
             if (_subscriptions.TryGetValue(eventType, out var handlers))
             {
-                // Find the subscription wrapper that holds the original handler reference
-                var subscriptionToRemove = handlers.FirstOrDefault(s => s.OriginalHandler == handler);
+                // Find the subscription wrapper that holds the original handler reference.
+                // Cast to the concrete delegate type so this is a value comparison
+                // (delegate equality) rather than a reference comparison.
+                var subscriptionToRemove = handlers.FirstOrDefault(s => (s.OriginalHandler as Action<TEvent>) == handler);
                 if (subscriptionToRemove != null)
                 {
                     handlers.Remove(subscriptionToRemove);
