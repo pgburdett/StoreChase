@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -11,6 +12,7 @@ namespace StoreChase
         private SpriteFont? _font;
 
         private const float CellSize = 2f; // world units per grid cell
+        private const float WalkCycleSpeed = 12f; // radians/sec of the player's limb swing
 
         private GridMap _map = null!;
         private Player _player = null!;
@@ -24,7 +26,8 @@ namespace StoreChase
         // Cube/floor meshes, built once and reused (just repositioned via world matrix).
         private VertexPositionNormalColor[] _wallVerts = null!;
         private VertexPositionNormalColor[] _floorVerts = null!;
-        private VertexPositionNormalColor[] _playerVerts = null!;
+        private PersonPart[] _playerParts = null!;
+        private float _walkPhase; // drives the player's limb swing
         private Texture2D _uiPixel = null!;
 
         // The cat replaces the procedural critter cube. It needs its own
@@ -33,6 +36,7 @@ namespace StoreChase
         // see BuildCritterModelTransform for why each piece is there.
         private StaticMesh? _catMesh;
         private BasicEffect _catEffect = null!;
+        private CatWalkAnimator? _catAnim;
         private Matrix _critterModelTransform = Matrix.Identity;
 
         private bool _won = false;
@@ -89,7 +93,7 @@ namespace StoreChase
             // already handles reasonably well.
 
             _wallVerts = CubeMesh.Build(new Color(90, 60, 40));       // shelf brown
-            _playerVerts = CubeMesh.Build(Color.DodgerBlue);
+            _playerParts = PersonMesh.Build();
             _floorVerts = CubeMesh.BuildFloorQuad(new Color(50, 50, 55), _map.Width * CellSize, _map.Height * CellSize);
 
             _uiPixel = new Texture2D(GraphicsDevice, 1, 1);
@@ -120,6 +124,7 @@ namespace StoreChase
             _catEffect.EnableDefaultLighting();
 
             _critterModelTransform = BuildCritterModelTransform(_catMesh);
+            _catAnim = new CatWalkAnimator(_catMesh);
         }
 
         // The raw OBJ is in the exporter's native units/orientation, which
@@ -247,25 +252,63 @@ namespace StoreChase
                 }
             }
 
-            // Player: procedural cube (kept simple since it's just "you").
-            var playerWorld = Matrix.CreateScale(CellSize * 0.6f)
-                               * Matrix.CreateTranslation(_player.WorldPos);
-            DrawMesh(_playerVerts, playerWorld);
+            DrawPlayer(gameTime);
 
-            DrawCritter();
+            DrawCritter(gameTime);
 
             DrawUiOverlay();
 
             base.Draw(gameTime);
         }
 
+        private void DrawPlayer(GameTime gameTime)
+        {
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // Advance the walk cycle while moving; ease back to a neutral pose
+            // (swing = sin(0) = 0) when idle so limbs don't stick mid-stride.
+            if (_player.IsMoving)
+                _walkPhase += dt * WalkCycleSpeed;
+            else
+                _walkPhase = MathHelper.Lerp(_walkPhase, 0f, 1f - MathF.Exp(-8f * dt));
+
+            float swing = MathF.Sin(_walkPhase) * 0.4f;
+
+            var facing = Matrix.CreateRotationY(_player.FacingAngle);
+            var placement = Matrix.CreateTranslation(_player.WorldPos);
+
+            foreach (var part in _playerParts)
+            {
+                Matrix world;
+                if (part.SwingSign != 0f)
+                {
+                    // Swing the limb around its joint (row-vector convention:
+                    // compose left-to-right, so the swing is applied in the
+                    // limb's part space first, then the joint is moved into
+                    // the body, then the body is faced and placed).
+                    world = Matrix.CreateRotationX(swing * part.SwingSign)
+                          * Matrix.CreateTranslation(part.Pivot)
+                          * facing * placement;
+                }
+                else
+                {
+                    world = facing * placement;
+                }
+                DrawMesh(part.Vertices, world);
+            }
+        }
+
         // Draws the cat model at the critter's current position, facing its
         // direction of travel. Falls back to nothing drawn (not a cube) if
         // the model failed to load, so a load failure is obvious rather than
         // silently swapped for a placeholder shape.
-        private void DrawCritter()
+        private void DrawCritter(GameTime gameTime)
         {
             if (_catMesh == null) return;
+
+            // Procedurally swing the legs (see CatWalkAnimator) before drawing;
+            // it rewrites the mesh's vertex positions/normals in place.
+            _catAnim?.Update((float)gameTime.ElapsedGameTime.TotalSeconds, _critter.IsMoving);
 
             // Order matters: normalize the raw model (transform), then face
             // its travel direction (rotation), then place it in the world

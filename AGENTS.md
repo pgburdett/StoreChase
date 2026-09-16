@@ -13,10 +13,10 @@ Single-project C# **MonoGame DesktopGL** game targeting `net10.0` (see `StoreCha
 
 ## Content & assets
 
-- The MGCB content pipeline (`Content/Content.mgcb`) builds only `Content/DefaultFont.spritefont` (UI text). Everything visual is either procedural geometry (`CubeMesh.cs`, `VertexPositionNormalColor`) or a runtime-loaded OBJ.
+- The MGCB content pipeline (`Content/Content.mgcb`) builds only `Content/DefaultFont.spritefont` (UI text). Everything visual is either procedural geometry (`CubeMesh.cs`, `PersonMesh.cs`, `VertexPositionNormalColor`) or a runtime-loaded OBJ. The player is a procedural humanoid whose arms/legs swing around joint pivots each frame (`PersonMesh` + `Game1.DrawPlayer`) — no animation assets.
 - `DefaultFont.spritefont` names the system font `DejaVu Sans`; if the content build fails with "font not found" on another machine/OS, change `<FontName>` to an installed font and rebuild (`dotnet tool restore` then `dotnet build`).
-- The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg` — is loaded **at runtime** by `ObjLoader.cs` from the relative path `Content/Models/Cat.obj`, NOT through MGCB. `StoreChase.csproj` already copies `Content\Models\**` to the output dir (`CopyToOutputDirectory`), so new model files only work if they land under `Content/Models` — do not register them in `Content.mgcb`.
-- `ObjLoader` is deliberately narrow: single material, quad faces, `vt`/`vn` assumed present; uses `short` indices (35K verts fits, cap is 65,535). If a new OBJ fails, start there.
+- The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg`, `Cat_bump.jpg` — is loaded **at runtime** by `ObjLoader.cs` from the relative path `Content/Models/Cat.obj`, NOT through MGCB. `StoreChase.csproj` already copies `Content\Models\**` to the output dir (`CopyToOutputDirectory`), so new model files only work if they land under `Content/Models` — do not register them in `Content.mgcb`.
+- `ObjLoader` is deliberately narrow: single material, quad faces, `vt`/`vn` assumed present; uses 32-bit `int` indices (no 65,535 vertex cap). If a new OBJ fails, start there.
 
 ## Architecture
 
@@ -35,7 +35,8 @@ Single-project C# **MonoGame DesktopGL** game targeting `net10.0` (see `StoreCha
 ## Critter AI
 
 - `ICritterAI.cs` defines `CritterContext` (a `record struct`) and one method `DecideNextMove`. `SmartAnimalAI.cs` implements alert(≤8)/flee(≤4)/wander tiers and tunables `ReplanInterval`, `AlertRadius`, `FleeRadius`, `QuirkChance`.
-- `ChooseQuirkMove` is a stub returning null, so `QuirkChance` never actually fires; `ReplanInterval` isn't enforced (path is followed to completion, then replanned). Movement/catch logic lives in `Critter.cs`.
+- `ChooseQuirkMove` is a stub returning null, so `QuirkChance` never actually fires; `ReplanInterval` gates flee replans via `_replanTimer`, but the timer only ticks while the path is empty and alert/wander tiers ignore it. Movement/catch logic lives in `Critter.cs`.
+- `CatWalkAnimator.cs` procedurally swings the cat's four legs: it finds leg vertices from the mesh geometry (low-Z band split by X/Y) and rotates them around hip pivots with a trot gait in `Update`, rewriting `StaticMesh.Vertices` in place (driven by `Critter.IsMoving` from `Game1.DrawCritter`). No skeleton/assets.
 
 ## Repo gotchas
 

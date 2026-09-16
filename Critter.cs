@@ -7,8 +7,9 @@ public class Critter
 {
     public GridPos Cell { get; private set; }
     public Vector3 WorldPos { get; private set; }
-    public bool Caught { get; private set; }
-    public float FacingAngle { get; private set; }
+public bool Caught { get; private set; }
+        public float FacingAngle { get; private set; }
+        public bool IsMoving => _isMoving;
     public Quaternion Rotation { get; private set; } = Quaternion.Identity;
 
     private GridPos _from;

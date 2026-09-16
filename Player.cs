@@ -9,6 +9,7 @@ namespace StoreChase
     {
         public GridPos Cell { get; private set; }
         public Vector3 WorldPos { get; private set; } // X/Z = position, Y = 0 (floor level)
+        public float FacingAngle { get; private set; } // radians around Y; +Z = 0 (matches Critter)
 
         private GridPos _from;
         private GridPos _to;
@@ -17,11 +18,14 @@ namespace StoreChase
 
         private Point _heldDirection = Point.Zero;
 
+        public bool IsMoving => _t < 1f;
+
         public Player(GridPos start, float cellSize)
         {
             Cell = start;
             _from = start;
             _to = start;
+            _t = 1f; // at rest, so the first frame isn't treated as "moving"
             WorldPos = new Vector3(start.X * cellSize, 0f, start.Y * cellSize);
         }
 
@@ -56,6 +60,10 @@ namespace StoreChase
                 Vector3 fromPos = new(_from.X * cellSize, 0f, _from.Y * cellSize);
                 Vector3 toPos = new(_to.X * cellSize, 0f, _to.Y * cellSize);
                 WorldPos = Vector3.Lerp(fromPos, toPos, _t);
+
+                Vector3 delta = toPos - fromPos;
+                if (delta.LengthSquared() > 0.0001f)
+                    FacingAngle = (float)System.Math.Atan2(delta.X, delta.Z);
 
                 if (_t >= 1f) Cell = _to;
             }

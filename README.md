@@ -1,8 +1,8 @@
 # Store Chase 3D — MonoGame Top-Down (Orthographic)
 
-A small grid-based chase game in a 3D scene viewed from above: you (blue cube)
-hunt the cat through store shelves. Everything visual is either procedural
-geometry or a runtime-loaded OBJ — no external scene assets.
+A small grid-based chase game in a 3D scene viewed from above: you (a blue
+procedural person) hunt the cat through store shelves. Everything visual is
+either procedural geometry or a runtime-loaded OBJ — no external scene assets.
 
 ## Run it
 
@@ -55,16 +55,21 @@ Gamepad:
   `Content/DefaultFont.spritefont` (UI text, currently `DejaVu Sans`). If the
   build fails with "font not found" on another machine, change `<FontName>` to
   an installed font and rebuild.
-- The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg` — is
-  loaded **at runtime** by `ObjLoader.cs`, NOT through MGCB. `StoreChase.csproj`
-  copies `Content\Models\**` to the output dir, so new model files just need to
-  land under `Content/Models`.
+- The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg`,
+  `Cat_bump.jpg` — is loaded **at runtime** by `ObjLoader.cs`, NOT through MGCB.
+  `StoreChase.csproj` copies `Content\Models\**` to the output dir, so new
+  model files just need to land under `Content/Models`.
 - `ObjLoader` is deliberately narrow: single material, quad faces, `vt`/`vn`
-  assumed present; uses `short` indices (~35K verts fits, cap is 65,535).
+  assumed present; uses 32-bit `int` indices, so vertex count isn't capped at
+  65,535.
 - `CubeMesh.cs` builds cube/floor geometry by hand as `VertexPositionNormalColor`
   (a custom vertex type — MonoGame ships no Position+Normal+Color struct, and
-  Normal is required for `BasicEffect` lighting). `Game1` draws these with
-  `DrawUserPrimitives`.
+  Normal is required for `BasicEffect` lighting). `PersonMesh.cs` reuses the
+  same codepath to build a small humanoid (head/torso/arms/legs) for the player,
+  returned as parts each tagged with a joint pivot. `Game1.DrawPlayer` rotates
+  the arms/legs around those pivots each frame with an opposite-phase sine swing
+  (eased back to rest when idle) — so the walk cycle is purely procedural, no
+  animation assets. `Game1` draws these with `DrawUserPrimitives`.
 
 ## Camera
 
@@ -116,20 +121,28 @@ one grid cell's height, then lift so the paws land on Y=0. Each step was traced
 numerically with real coordinates, so `Critter.FacingAngle = 0` correctly means
 "facing +Z" and the model rotates via `Matrix.CreateRotationY(FacingAngle)`.
 
-**Not wired up**: `Cat_bump.jpg` is copied into `Content/Models/` but never
-loaded. `BasicEffect` doesn't support normal mapping — that needs a custom
-shader. The cat renders with diffuse texture + default directional lighting only.
+**Not wired up**: no normal mapping/bump — `BasicEffect` doesn't support it;
+that needs a custom shader. `Content/Models/Cat_bump.jpg` ships next to the
+model and `Cat.mtl` references it (`map_Bump Cat_bump.jpg`), but `ObjLoader`
+ignores `map_Bump`, so at runtime the bump has no effect. The cat renders with
+diffuse texture + default directional lighting only.
 
-**Static pose, animation-ready**: OBJ has no skeleton/bones, so this is one
-fixed pose translated/rotated/scaled as a rigid whole. `StaticMesh` stores only
+**Procedurally animated legs**: OBJ has no skeleton/bones, so rather than an
+animation asset, `CatWalkAnimator.cs` derives the four legs from the mesh's own
+geometry — vertices in the bottom ~20% band, split left/right by X and
+nose/tail by Y (the four paw clusters straddle those with clear gaps). Each
+frame it rotates leg-weighted vertices around their hip pivot (at 45% of model
+height) with a diagonal trot gait (front-left + back-right in phase). Weight
+falls off to zero toward the hip and radially out from each leg centroid, so the
+body doesn't tear or deform. `Game1.DrawCritter` updates it before drawing;
+`Critter.IsMoving` drives the cycle. All thresholds are fractions of model
+height, so a re-exported/rescaled cat still works. `StaticMesh` still stores only
 geometry, so a future animated mesh (glTF/FBX with bones) could replace it
-without restructuring how `Critter`/`Game1` consume a mesh.
+alongside the procedural path.
 
 **Known rough edges**:
 - No mipmapping/sampler tuning — the 346KB diffuse at a small on-screen size can
   alias; `SamplerState.AnisotropicClamp` before drawing the cat would help.
-- `ObjLoader` uses `short` indices; a denser model would need `int` indices and
-  `DrawUserIndexedPrimitives`'s 32-bit overload.
 - Collision/catch is purely grid-cell based (`Critter.Cell`), unaffected by the
   visual model footprint.
 
@@ -157,9 +170,10 @@ quirks don't actually fire yet — the roll just costs it a frame. `_lastCell`
 (and its build warning) is the leftover intended for this.
 
 Tunables: `ReplanInterval`, `AlertRadius`, `FleeRadius`, `QuirkChance`.
-`ReplanInterval` is currently not enforced the way the name implies:
-`DecideNextMove` follows a planned path to completion and replans the moment it
-empties, so pacing is effectively "per finished path" rather than per 0.6s.
+`ReplanInterval` gates flee replans via `_replanTimer`, but only partially: the
+timer is decremented only while the path is empty (so pacing is effectively
+"per finished path, then wait out the remainder of the interval"), and the
+alert/wander tiers never consult it.
 
 **Cost note**: each re-plan does two full-grid BFS scans. Trivial at this map
 size, but if you scale the maze up, increase `ReplanInterval` or cache one map.
