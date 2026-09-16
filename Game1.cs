@@ -199,6 +199,7 @@ namespace StoreChase
             {
                 VertexColorEnabled = true,
                 LightingEnabled = true,
+                
             };
             _effect.EnableDefaultLighting();
             // Default lighting comes from an angle; for a top-down view we mostly
@@ -231,7 +232,8 @@ namespace StoreChase
             {
                 TextureEnabled = true,
                 Texture = _catMesh.DiffuseTexture,
-                LightingEnabled = true,
+                LightingEnabled = true
+                
             };
             _catEffect.EnableDefaultLighting();
 
@@ -337,7 +339,9 @@ namespace StoreChase
 
             _effect.View = _view;
             _effect.Projection = _projection;
-
+            _effect.LightingEnabled = true;
+            _effect.AmbientLightColor = new Vector3(0.5f, 0.5f, 0.5f); // Fills in shadows
+            _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
             // Floor (single quad at origin, Y=0)
             DrawMesh(_floorVerts, Matrix.Identity);
 
@@ -386,7 +390,9 @@ namespace StoreChase
             _catEffect.World = world;
             _catEffect.View = _view;
             _catEffect.Projection = _projection;
-
+            _catEffect.LightingEnabled = true;
+            _catEffect.AmbientLightColor = new Vector3(0.5f, 0.5f, 0.5f); // Must match floor!
+            _catEffect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Must match floor!
             foreach (var pass in _catEffect.CurrentTechnique.Passes)
             {
                 pass.Apply();

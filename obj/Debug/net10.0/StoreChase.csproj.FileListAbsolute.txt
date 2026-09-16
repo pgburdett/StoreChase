@@ -1,3 +1,9 @@
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/BasicGeometryCreator.cs
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.mtl
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.obj
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend1
+/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat_diffuse.jpg
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/StoreChase
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/StoreChase.deps.json
 /home/pat/source/repos/StoreChase/bin/Debug/net10.0/StoreChase.runtimeconfig.json
@@ -34,9 +40,3 @@
 /home/pat/source/repos/StoreChase/obj/Debug/net10.0/StoreChase.pdb
 /home/pat/source/repos/StoreChase/obj/Debug/net10.0/StoreChase.genruntimeconfig.cache
 /home/pat/source/repos/StoreChase/obj/Debug/net10.0/ref/StoreChase.dll
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/BasicGeometryCreator.cs
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.mtl
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat.obj
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/Cat_diffuse.jpg
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend
-/home/pat/source/repos/StoreChase/bin/Debug/net10.0/Content/Models/cat3d.blend1
