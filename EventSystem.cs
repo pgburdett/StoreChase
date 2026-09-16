@@ -68,7 +68,7 @@ public class EventSystem
             Type eventType = typeof(TEvent);
             if (_subscriptions.TryGetValue(eventType, out var handlers))
             {
-// Find the subscription wrapper that holds the original handler reference
+                // Find the subscription wrapper that holds the original handler reference
                 var subscriptionToRemove = handlers.FirstOrDefault(s => s.OriginalHandler == handler);
                 if (subscriptionToRemove != null)
                 {
@@ -87,8 +87,8 @@ public class EventSystem
             Type eventType = typeof(TEvent);
             if (!_subscriptions.TryGetValue(eventType, out var handlers)) return;
 
-// Create a copy to allow handlers to unsubscribe themselves during the loop
-// without throwing "Collection Modified" exceptions.
+        // Create a copy to allow handlers to unsubscribe themselves during the loop
+        // without throwing "Collection Modified" exceptions.
             handlersToRun = handlers.ToList();
         }
 
