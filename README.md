@@ -155,10 +155,13 @@ match MonoGame's, so the actual vertex data was inspected to confirm it:
   head held up off the ground.
 
 `BuildCritterModelTransform()` in `Game1.cs` uses this to build one transform:
-center on X/Z, rotate -90° around X (maps old Z-up to new Y-up), scale to fit
-one grid cell's height, then lift so the paws land on Y=0. Each step was traced
-numerically with real coordinates, so `Critter.FacingAngle = 0` correctly means
-"facing +Z" and the model rotates via `Matrix.CreateRotationY(FacingAngle)`.
+center on X/Z, rotate -90° around X (maps old Z-up to new Y-up), rotate 180°
+around Y, scale to fit one grid cell's height, then lift so the paws land on
+Y=0. The 180° yaw is an **empirical correction**: tracing the vertex data says
+the head lands at +Z after the axis fix alone, but in game the cat visibly ran
+face-first toward the player while fleeing (i.e. it rendered 180° off), so the
+flip is what actually makes `Critter.FacingAngle = 0` mean "facing +Z" (the
+model rotates via `Matrix.CreateRotationY(FacingAngle)`).
 
 **Normal mapping**: the cat is drawn with a custom effect
 (`Content/Effects/CatNormalMap.fx`) rather than `BasicEffect`, so the bump map
