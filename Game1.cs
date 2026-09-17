@@ -164,11 +164,9 @@ namespace StoreChase
         //   1. Centers the model at its own X/Z origin (so scaling/rotating
         //      happens around its middle, not some arbitrary export origin)
         //   2. Rotates -90° around X, which maps old Z (up) to new Y (up)
-        //      and old Y (nose/tail) to new Z, then a 180° yaw so the nose
-        //      lands on the +Z side. This is what makes FacingAngle=0 in
-        //      Critter.cs correctly mean "facing +Z." (The yaw flip is an
-        //      empirical correction: the axis fix alone rendered the cat
-        //      facing opposite its travel direction — see the note below.)
+        //      and old Y (nose/tail) to new Z, with the nose ending up on
+        //      the +Z side. This is what makes FacingAngle=0 in Critter.cs
+        //      correctly mean "facing +Z."
         //   3. Scales it down to fit inside roughly one grid cell
         //   4. Lifts it back up so its feet sit on the floor (Y=0) instead
         //      of the model's center sitting there — also verified: a paw
@@ -194,14 +192,6 @@ namespace StoreChase
             // -90 degrees around X so old Z (up) becomes new Y (up).
             var axisFix = Matrix.CreateRotationX(MathHelper.ToRadians(-90f));
 
-            // 180-degree yaw about the model's (now vertical) Y axis. Static
-            // vertex analysis puts the head at -Y (-> +Z after the axis fix),
-            // but in game the cat visibly ran face-first toward the player
-            // while fleeing: it rendered 180 degrees off. This flip turns the
-            // nose from -Z back to +Z so Critter's FacingAngle rotation makes
-            // it face where it actually moves.
-            var yawFlip = Matrix.CreateRotationY(MathHelper.Pi);
-
             // After the axis fix, model height maps directly from the
             // original Z extent (confirmed: paws sit near old Z=0, back/head
             // near old Z=max), so scale using that directly rather than an
@@ -219,7 +209,7 @@ namespace StoreChase
             float liftY = (rawHeight / 2f) * scale;
             var liftM = Matrix.CreateTranslation(0f, liftY, 0f);
 
-            return centerXZ * axisFix * yawFlip * scaleM * liftM;
+            return centerXZ * axisFix * scaleM * liftM;
         }
 
         protected override void Update(GameTime gameTime)
