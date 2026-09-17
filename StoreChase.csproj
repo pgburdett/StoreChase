@@ -16,15 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- research/ holds scratch copies of source files plus a nested
-         mgtest project (with its own generated obj/). It is tooling, not
-         part of the game, so keep it out of the default compile glob. -->
-    <Compile Remove="research\**" />
-    <None Remove="research\**" />
-    <EmbeddedResource Remove="research\**" />
-  </ItemGroup>
-
-  <ItemGroup>
     <!-- The cat model files are loaded at runtime by ObjLoader.cs, not
          through the MGCB content pipeline (see ObjLoader.cs for why).
          Because of that, MSBuild has no reason to know about them unless
