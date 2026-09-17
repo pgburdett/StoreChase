@@ -1,7 +1,7 @@
 import sys
 from collections import defaultdict
 
-path = "Content/Models/Cat.obj"
+path = "../Content/Models/Cat.obj"
 vs = []
 with open(path, "r", errors="ignore") as f:
     for line in f:

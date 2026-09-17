@@ -8,13 +8,17 @@ namespace StoreChase;
 //
 // Axis conventions mirror the grid: Move.X = +1 right, Move.Y = +1 down
 // (screen/grid space), so "up" is -1 on Y. Tilt is +1 = tilt up. Zoom is a
-// per-frame delta in "wheel notches", additive across sources.
+// per-frame delta in "wheel notches", additive across sources. Look is the
+// per-frame first-person look delta (mouse pixels, or a stick rate scaled to
+// the same unit), right/up positive.
 public readonly struct InputState
 {
     public Vector2 Move { get; init; }
     public Vector2 CameraPan { get; init; }
     public float Tilt { get; init; }
     public float Zoom { get; init; }
+    public Vector2 Look { get; init; }
+    public bool ToggleCamera { get; init; }
     public bool Restart { get; init; }
     public bool Exit { get; init; }
 
@@ -27,6 +31,8 @@ public readonly struct InputState
         CameraPan != Vector2.Zero ||
         Tilt != 0f ||
         Zoom != 0f ||
+        Look != Vector2.Zero ||
+        ToggleCamera ||
         Restart ||
         Exit;
 }

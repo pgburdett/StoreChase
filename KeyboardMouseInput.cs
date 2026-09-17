@@ -7,11 +7,16 @@ namespace StoreChase;
 // game reads the keyboard/mouse directly, and it holds the mouse-wheel
 // previous-value state needed to turn the cumulative scroll value into a
 // per-frame delta.
-public class KeyboardMouseInput : IInputSource
+public class KeyboardMouseInput : IInputSource, IMouseLookSource
 {
     private int _previousScrollValue;
+    private bool _previousToggle;
+    private bool _mouseCaptured;
 
     public InputDeviceKind Kind => InputDeviceKind.KeyboardMouse;
+
+    public bool MouseLookEnabled { get; set; }
+    public Point MouseLookCenter { get; set; }
 
     public InputState Poll(GameTime gameTime)
     {
@@ -44,12 +49,41 @@ public class KeyboardMouseInput : IInputSource
         float zoom = (scrollValue - _previousScrollValue) / 120f;
         _previousScrollValue = scrollValue;
 
+        // First-person look: while captured, report how far the pointer moved
+        // from the screen center since last frame, then re-center it so the
+        // delta stays relative and the cursor never reaches an edge. The
+        // capture-start frame only re-centers (no delta), so entering FPS
+        // doesn't snap the view.
+        Vector2 look = Vector2.Zero;
+        if (MouseLookEnabled)
+        {
+            if (_mouseCaptured)
+                look = new Vector2(ms.X - MouseLookCenter.X, ms.Y - MouseLookCenter.Y);
+
+            if (ms.X != MouseLookCenter.X || ms.Y != MouseLookCenter.Y)
+                Mouse.SetPosition(MouseLookCenter.X, MouseLookCenter.Y);
+
+            _mouseCaptured = true;
+        }
+        else
+        {
+            _mouseCaptured = false;
+        }
+
+        // V flips between isometric and first-person; report the rising edge
+        // only, so holding the key doesn't toggle every frame.
+        bool toggleNow = kb.IsKeyDown(Keys.V);
+        bool toggle = toggleNow && !_previousToggle;
+        _previousToggle = toggleNow;
+
         return new InputState
         {
             Move = move,
             CameraPan = pan,
             Tilt = tilt,
             Zoom = zoom,
+            Look = look,
+            ToggleCamera = toggle,
             Restart = kb.IsKeyDown(Keys.R),
             Exit = kb.IsKeyDown(Keys.Escape),
         };

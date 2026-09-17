@@ -3,6 +3,8 @@
 A small grid-based chase game in a 3D scene viewed from above: you (a blue
 procedural person) hunt the cat through store shelves. Everything visual is
 either procedural geometry or a runtime-loaded OBJ — no external scene assets.
+Press **V** (or gamepad **Y**) to switch to a first-person mouse-look view, and
+back to the isometric overhead camera.
 
 ## Run it
 
@@ -19,18 +21,22 @@ Keyboard/mouse and gamepad are both supported and **auto-detected** — whicheve
 device you use last becomes active (see Input below).
 
 Keyboard / mouse:
-- Arrow keys / WASD: move the player
+- Arrow keys / WASD: move the player (in first-person, camera-relative: W
+  forward, S back, A/D strafe)
 - I / J / K / L: pan the camera (up/left/down/right)
 - U / O: tilt the camera down/up
 - Mouse wheel: zoom in/out
+- V: toggle first-person / isometric view
+- Mouse: look around in first-person (the pointer is captured)
 - Escape: quit
 - R: restart, once you've caught the critter
 
 Gamepad:
 - Left stick / D-pad: move
-- Right stick: pan the camera
+- Right stick: pan the camera; look around in first-person
 - Triggers (RT/LT): tilt
 - Shoulders (RB/LB): zoom
+- Y: toggle first-person / isometric view
 - Start: restart
 - Back: quit
 
@@ -41,7 +47,9 @@ Gamepad:
 - `GridMap.cs` — pure grid logic (walkable/BFS: `NextStepToward`,
   `DistanceMapFrom`). `GridPos` lives in the same file. Map layout is a
   hardcoded string array, **18×12**.
-- `Player.cs` / `Critter.cs` — grid-locked movement. They expose `Vector3
+- `Player.cs` / `Critter.cs` — movement. `Critter` is always grid-locked;
+  `Player` is grid-locked in isometric and free world-space in first-person
+  (see Camera below). They expose `Vector3
   WorldPos` (X/Z plane, Y=0) and have **no `Draw` method**; `Game1` owns all
   rendering. World space is X/Z with Y = up; `Game1.CellSize = 2f` world units
   per grid cell.
@@ -51,10 +59,12 @@ Gamepad:
 
 ## Content & assets
 
-- The MGCB content pipeline (`Content/Content.mgcb`) builds only
-  `Content/DefaultFont.spritefont` (UI text, currently `DejaVu Sans`). If the
-  build fails with "font not found" on another machine, change `<FontName>` to
-  an installed font and rebuild.
+- The MGCB content pipeline (`Content/Content.mgcb`) builds
+  `Content/DefaultFont.spritefont` (UI text, currently `DejaVu Sans`) and
+  `Content/Effects/CatNormalMap.fx` (the cat's shader; effect compilation needs
+  Wine on Linux/macOS — see AGENTS.md). If the build fails with "font not
+  found" on another machine, change `<FontName>` to an installed font and
+  rebuild.
 - The cat model — `Content/Models/Cat.obj`, `Cat.mtl`, `Cat_diffuse.jpg`,
   `Cat_bump.jpg` — is loaded **at runtime** by `ObjLoader.cs`, NOT through MGCB.
   `StoreChase.csproj` copies `Content\Models\**` to the output dir, so new
@@ -73,8 +83,11 @@ Gamepad:
 
 ## Camera
 
-`Camera.cs` is the single source of truth for pan, zoom, and tilt. `Game1`
-constructs it in `SetupCamera()` and calls `Camera.Update(gameTime, input)`.
+`Camera.cs` is the single source of truth for camera state and controls. `Game1`
+constructs it in `SetupCamera()` and calls `Camera.Update(gameTime, input,
+playerWorldPos, playerFacing)`.
+
+### Isometric (default)
 
 - Pan (`_panOffset`, world units) is clamped to `mapSize * 0.75` so you can't
   drift far from the store. Pan speed scales with zoom.
@@ -85,11 +98,37 @@ constructs it in `SetupCamera()` and calls `Camera.Update(gameTime, input)`.
   above the look-at point and uses `Matrix.CreateOrthographic` (no perspective
   distortion). Once tilted at all it swings back along +Z, pivoting around the
   look-at point, and switches to `Matrix.CreatePerspectiveFieldOfView` (50°).
-- **Known seam**: the view matrix's "up" vector has to flip from `Forward`
-  (only valid at tilt=0, where the look direction is parallel to world Up) to
-  world `Up` (any nonzero tilt). This causes a one-frame roll snap right at the
-  0°/1° boundary. Brief and easy to miss, but visible if you linger at exactly
-  that boundary; smoothing would mean blending up vectors across a small range.
+- The camera always uses world `Up`. A pure top-down view would make the look
+  direction parallel to `Up` (and the up vector ambiguous), so `Camera` nudges
+  its position by a tiny fraction of the camera distance along +Z. That keeps
+  the look direction ever-so-slightly off-vertical at every angle, so the same
+  `Up` is valid from 0° to 80° with no up-vector flip (an earlier revision
+  swapped `Forward`→`Up` at the 0°/1° boundary and got a one-frame roll).
+
+### First-person (V / gamepad Y)
+
+`CameraViewMode.FirstPerson` seats a 60° perspective camera at the player's
+head (`FirstPersonEyeHeight` = 2.2, the PersonMesh head center) and drives it
+with mouse-look:
+
+- Yaw/pitch come from `InputState.Look` (right/up positive) scaled by
+  `LookSensitivity` rad/unit; pitch clamps to ±`MaxPitchDegrees` (85). Yaw 0
+  means +Z, matching `Player.FacingAngle`, and entering FPS seeds yaw from the
+  player's facing so you start off looking where the player faces. Forward is
+  `(sin yaw, cos yaw)` and the camera's right is `cross(forward, up)`, so
+  mouse-right turns right, mouse-up looks up.
+- Movement is **free (not grid-locked)** in first-person. `Camera.MapMoveToWorld`
+  turns WASD into a normalized camera-relative XZ heading (W heads where you
+  look, S backs up, A/D strafe); `Player` moves continuously at `FreeMoveSpeed`
+  with per-axis collision so you slide along shelves. The catch check and
+  critter AI are still grid-based, so `Player.Cell` tracks the nearest walkable
+  tile while free-moving; toggling back to isometric snaps the player to that
+  cell center so the grid state stays coherent.
+- The view is rebuilt from the player's current `WorldPos` each frame, so it
+  tracks the player while they move. Iso pan/zoom/tilt are left untouched while
+  in FPS and restored exactly when you toggle back.
+- `Game1` hides the cursor, captures the pointer (see Input), and skips drawing
+  the player's own body since the camera sits in its head.
 
 ## Cat model
 
@@ -121,11 +160,21 @@ one grid cell's height, then lift so the paws land on Y=0. Each step was traced
 numerically with real coordinates, so `Critter.FacingAngle = 0` correctly means
 "facing +Z" and the model rotates via `Matrix.CreateRotationY(FacingAngle)`.
 
-**Not wired up**: no normal mapping/bump — `BasicEffect` doesn't support it;
-that needs a custom shader. `Content/Models/Cat_bump.jpg` ships next to the
-model and `Cat.mtl` references it (`map_Bump Cat_bump.jpg`), but `ObjLoader`
-ignores `map_Bump`, so at runtime the bump has no effect. The cat renders with
-diffuse texture + default directional lighting only.
+**Normal mapping**: the cat is drawn with a custom effect
+(`Content/Effects/CatNormalMap.fx`) rather than `BasicEffect`, so the bump map
+actually contributes. `Cat.mtl` references it (`map_Bump Cat_bump.jpg`); that
+image is a flat grayscale height map, not a tangent-space normal map, so
+`ObjLoader` bakes it into one at load (central differences) and derives
+per-vertex tangents from the OBJ's UVs (`ComputeTangents`, handedness stored in
+the tangent's `w`). The shader rebuilds the tangent basis, perturbs the normal
+per pixel, and lights it with the same key/fill/back setup as BasicEffect's
+`EnableDefaultLighting` so the cat sits consistently beside the floor/walls.
+Two traps worth remembering: every uniform (textures, transforms, and the light
+directions/colors) is pushed from C# — the effect framework doesn't reliably
+apply HLSL uniform initializers, and if the light colors come up zero the
+shader returns black, i.e. the cat vanishes; and the runtime-generated mip
+chains must fill *every* level, since without that a mipmapping sampler treats
+the texture as incomplete and samples black.
 
 **Procedurally animated legs**: OBJ has no skeleton/bones, so rather than an
 animation asset, `CatWalkAnimator.cs` derives the four legs from the mesh's own
@@ -141,8 +190,9 @@ geometry, so a future animated mesh (glTF/FBX with bones) could replace it
 alongside the procedural path.
 
 **Known rough edges**:
-- No mipmapping/sampler tuning — the 346KB diffuse at a small on-screen size can
-  alias; `SamplerState.AnisotropicClamp` before drawing the cat would help.
+- `ObjLoader` builds a mip chain for both the diffuse and the baked normal map,
+  and `Game1.DrawCritter` uses `SamplerState.AnisotropicClamp` on both slots, so
+  the diffuse no longer aliases when the cat is small on screen.
 - Collision/catch is purely grid-cell based (`Critter.Cell`), unaffected by the
   visual model footprint.
 
@@ -164,10 +214,10 @@ properties at the top of `SmartAnimalAI.cs`, **not** in `Critter.cs`):
   detour distance," and paths to the best via `GridMap.NextStepToward`.
 - **Wander** (otherwise): random walkable steps.
 
-`QuirkChance` (20%) is meant to make the critter occasionally double back or
-sidestep. Note: `ChooseQuirkMove` is currently a **stub that returns null**, so
-quirks don't actually fire yet — the roll just costs it a frame. `_lastCell`
-(and its build warning) is the leftover intended for this.
+`QuirkChance` (20%) makes the critter occasionally juke instead of following
+its escape plan. `ChooseQuirkMove` side-steps perpendicular to the player
+bearing, or doubles back to the cell it just left (tracked in `_lastCell`), and
+clears the planned path so the next decision replans.
 
 Tunables: `ReplanInterval`, `AlertRadius`, `FleeRadius`, `QuirkChance`.
 `ReplanInterval` gates flee replans via `_replanTimer`, but only partially: the
@@ -184,18 +234,24 @@ All device input goes through a small abstraction so gameplay never touches the
 device APIs:
 
 - `InputState.cs` — a per-frame, device-agnostic snapshot: `Move`, `CameraPan`,
-  `Tilt`, `Zoom`, `Restart`, `Exit`, plus `HasActivity`.
+  `Tilt`, `Zoom`, `Look`, `ToggleCamera`, `Restart`, `Exit`, plus `HasActivity`.
 - `IInputSource.cs` — one physical device. `InputDeviceKind` (`KeyboardMouse`,
-  `GamePad`) tells the rest of the game what the player is using.
+  `GamePad`) tells the rest of the game what the player is using. The optional
+  `IMouseLookSource` capability (`MouseLookEnabled`/`MouseLookCenter`) lets a
+  pointer-owning source switch from absolute position to a centered, relative
+  look delta; `InputSystem` forwards the camera's capture request to any source
+  that implements it.
 - `KeyboardMouseInput.cs` / `GamePadInput.cs` — the **only** files allowed to
-  call `Keyboard`/`Mouse`/`GamePad`.
+  call `Keyboard`/`Mouse`/`GamePad`. Both turn the toggle button (V / Y) into a
+  rising edge so holding it doesn't flip every frame.
 - `InputSystem.cs` — polls every source each frame (so per-device deltas like
   the mouse wheel stay current) and exposes the active device's state as
   `State`. The active device is auto-detected: the current source keeps control
   while it has input, otherwise the first other source with input takes over.
   `ActiveDevice`/`ActiveSource` expose the current one.
 
-`Player.Update` and `Camera.Update` take `in InputState`; add a new
+`Camera.Update` takes `in InputState`; `Player.Update` takes an already-resolved
+`moveDir` plus a `freeMove` flag. Add a new
 `IInputSource` (and register it in `Game1.Initialize`) rather than reading
 devices from gameplay code.
 
@@ -225,7 +281,8 @@ title's thread.
 
 The top of the screen shows the animated title, a small status indicator
 (gray = chasing, green = caught), and the elapsed-time / win text rendered with
-the `DefaultFont` SpriteFont.
+the `DefaultFont` SpriteFont, plus the active camera mode (`isometric` /
+`first-person`).
 
 ## Things you'll likely want to tweak
 
@@ -236,3 +293,6 @@ the `DefaultFont` SpriteFont.
    tilt.
 3. **No textures on the cubes** — flat vertex color. Texture-mapping them is a
    bigger jump (UVs on the vertex type, `Texture2D`, `_effect.TextureEnabled`).
+4. **First-person feel** — `Player.FreeMoveSpeed` (world units/sec) and
+   `Player.FreeRadius` (collision radius) tune free movement; `Camera.LookSensitivity`
+   (radians per look unit) and `Camera.MaxPitchDegrees` tune the look.

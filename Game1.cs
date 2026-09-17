@@ -31,11 +31,13 @@ namespace StoreChase
         private Texture2D _uiPixel = null!;
 
         // The cat replaces the procedural critter cube. It needs its own
-        // effect (textured, not vertex-colored) and a local transform to
-        // normalize the raw model into the game's world scale/orientation —
-        // see BuildCritterModelTransform for why each piece is there.
+        // effect (normal-mapped and textured, not vertex-colored) and a local
+        // transform to normalize the raw model into the game's world
+        // scale/orientation — see BuildCritterModelTransform for why each
+        // piece is there.
         private StaticMesh? _catMesh;
-        private BasicEffect _catEffect = null!;
+        private Effect _catEffect = null!;
+        private Texture2D? _flatNormalMap;
         private CatWalkAnimator? _catAnim;
         private Matrix _critterModelTransform = Matrix.Identity;
 
@@ -114,17 +116,41 @@ namespace StoreChase
             string modelPath = Path.Combine(Content.RootDirectory, "Models", "Cat.obj");
             _catMesh = ObjLoader.Load(GraphicsDevice, modelPath);
 
-            _catEffect = new BasicEffect(GraphicsDevice)
-            {
-                TextureEnabled = true,
-                Texture = _catMesh.DiffuseTexture,
-                LightingEnabled = true
-                
-            };
-            _catEffect.EnableDefaultLighting();
+            // Custom normal-mapped shader (see Content/Effects/CatNormalMap.fx).
+            // Its lighting is deliberately the same key+fill+back setup as
+            // BasicEffect's EnableDefaultLighting, so the cat reads as part of
+            // the same scene as the floor/walls.
+            //
+            // Every uniform is pushed from here: the effect framework does not
+            // reliably apply HLSL uniform initializers, and if the light colors
+            // come up zero the pixel shader returns black (an "invisible" cat).
+            _catEffect = Content.Load<Effect>("Effects/CatNormalMap");
+            _catEffect.Parameters["DiffuseTexture"].SetValue(_catMesh.DiffuseTexture);
+            _catEffect.Parameters["NormalTexture"].SetValue(_catMesh.NormalMapTexture ?? FlatNormalMap());
+            _catEffect.Parameters["AmbientColor"].SetValue(new Vector3(0.5f, 0.5f, 0.5f));
+            _catEffect.Parameters["KeyLightDirection"].SetValue(new Vector3(0.5265408f, 0.5735765f, 0.6275069f));
+            _catEffect.Parameters["KeyLightColor"].SetValue(new Vector3(1.0f, 0.9607844f, 0.8078432f));
+            _catEffect.Parameters["FillLightDirection"].SetValue(new Vector3(-0.7198464f, -0.3420201f, -0.4545195f));
+            _catEffect.Parameters["FillLightColor"].SetValue(new Vector3(0.9647059f, 0.9607844f, 0.945098f));
+            _catEffect.Parameters["BackLightDirection"].SetValue(new Vector3(-0.4545195f, 0.3420201f, -0.7198464f));
+            _catEffect.Parameters["BackLightColor"].SetValue(new Vector3(0.8078432f, 0.8039216f, 0.7647059f));
+            _catEffect.Parameters["SpecularStrength"].SetValue(0.2f);
+            _catEffect.Parameters["SpecularShininess"].SetValue(16f);
 
             _critterModelTransform = BuildCritterModelTransform(_catMesh);
             _catAnim = new CatWalkAnimator(_catMesh);
+        }
+
+        // A 1x1 blue (0,0,1) normal map — "no bump" — used when the model has
+        // no map_Bump so the shader always has something valid to sample.
+        private Texture2D FlatNormalMap()
+        {
+            if (_flatNormalMap == null)
+            {
+                _flatNormalMap = new Texture2D(GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
+                _flatNormalMap.SetData(new[] { new Color(128, 128, 255) });
+            }
+            return _flatNormalMap;
         }
 
         // The raw OBJ is in the exporter's native units/orientation, which
@@ -189,17 +215,30 @@ namespace StoreChase
 
         protected override void Update(GameTime gameTime)
         {
+            // Pointer capture follows the camera mode. Set it before polling so
+            // KeyboardMouseInput knows whether to report a relative look delta.
+            // (One frame of lag after a toggle is harmless.)
+            bool firstPerson = _camera.Mode == CameraViewMode.FirstPerson;
+            _input.MouseLookEnabled = firstPerson;
+            _input.MouseLookCenter = new Point(
+                GraphicsDevice.Viewport.Width / 2, GraphicsDevice.Viewport.Height / 2);
+            IsMouseVisible = !firstPerson;
+
             _input.Update(gameTime);
             var input = _input.State;
 
             if (input.Exit) Exit();
 
-            _camera.Update(gameTime, input);
+            _camera.Update(gameTime, input, _player.WorldPos, _player.FacingAngle);
 
             if (!_won)
             {
                 _elapsedTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
-                _player.Update(gameTime, _map, CellSize, input);
+                // Isometric walks the grid cell to cell; first-person moves the
+                // player freely (camera-relative) with wall sliding.
+                bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
+                Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
+                _player.Update(gameTime, _map, moveDir, freeMove);
                 _critter.Update(gameTime, _map, CellSize, _player.Cell);
 
                 if (_critter.Caught)
@@ -263,6 +302,10 @@ namespace StoreChase
 
         private void DrawPlayer(GameTime gameTime)
         {
+            // The first-person camera sits inside the player's head, so skip
+            // the player's own body (it would only clip through the view).
+            if (_camera.Mode == CameraViewMode.FirstPerson) return;
+
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
             // Advance the walk cycle while moving; ease back to a neutral pose
@@ -318,15 +361,23 @@ namespace StoreChase
             var placement = Matrix.CreateTranslation(_critter.WorldPos);
             var world = _critterModelTransform * facing * placement;
 
-            _catEffect.World = world;
-            _catEffect.View = _camera.View;
-            _catEffect.Projection = _camera.Projection;
-            _catEffect.LightingEnabled = true;
-            _catEffect.AmbientLightColor = new Vector3(0.5f, 0.5f, 0.5f); // Must match floor!
-            _catEffect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Must match floor!
+            _catEffect.Parameters["World"].SetValue(world);
+            _catEffect.Parameters["View"].SetValue(_camera.View);
+            _catEffect.Parameters["Projection"].SetValue(_camera.Projection);
+
+            // Straight-on sheen direction for the (small) specular term.
+            Vector3 cameraPos = Matrix.Invert(_camera.View).Translation;
+            _catEffect.Parameters["ViewDirection"].SetValue(cameraPos - world.Translation);
+
+            // The mip chains are built by ObjLoader; anisotropic filtering is
+            // applied here (after pass.Apply, which binds the effect's default
+            // sampler state) so the diffuse and normal maps stop aliasing when
+            // the cat is small on screen. Slots match the shader's s0/s1.
             foreach (var pass in _catEffect.CurrentTechnique.Passes)
             {
                 pass.Apply();
+                GraphicsDevice.SamplerStates[0] = SamplerState.AnisotropicClamp;
+                GraphicsDevice.SamplerStates[1] = SamplerState.AnisotropicClamp;
                 GraphicsDevice.DrawUserIndexedPrimitives(
                     PrimitiveType.TriangleList,
                     _catMesh.Vertices, 0, _catMesh.Vertices.Length,
@@ -357,9 +408,11 @@ namespace StoreChase
             {
                 DrawRainbowTitle(_font);
 
+                string view = _camera.Mode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
                 string status = _won ? $"Caught it! Time: {_elapsedTime:F1}s  (R to restart)"
                                       : $"Time: {_elapsedTime:F1}s";
                 _spriteBatch.DrawString(_font, status, new Vector2(40, 10), Color.White);
+                _spriteBatch.DrawString(_font, $"[V] view: {view}", new Vector2(40, 34), Color.LightGray);
             }
 
             _spriteBatch.End();

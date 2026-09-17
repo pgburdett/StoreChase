@@ -1,10 +1,11 @@
+using System;
 using Microsoft.Xna.Framework;
 
 namespace StoreChase
 {
-    // Same grid-locked movement as the 2D version. Only the coordinate
-    // mapping changes: X/Y grid -> X/Z world (Y is "up" in 3D). Input arrives
-    // as an abstracted InputState — no device APIs here.
+    // The player moves two ways: grid-locked cell-to-cell in the isometric
+    // view, or free world-space in first-person. Game1 resolves the input to a
+    // direction (no device APIs here) and picks the mode.
     public class Player
     {
         public GridPos Cell { get; private set; }
@@ -14,14 +15,20 @@ namespace StoreChase
         private GridPos _from;
         private GridPos _to;
         private float _t;
-        private const float MoveSpeed = 4.5f;
+        private const float MoveSpeed = 4.5f;   // grid steps per second
+        private const float FreeMoveSpeed = 6f; // world units per second (first-person)
+        private const float FreeRadius = 0.35f; // collision radius for free movement (world units)
+
+        private readonly float _cellSize;
 
         private Point _heldDirection = Point.Zero;
+        private bool _wasFreeMove;
 
         public bool IsMoving => _t < 1f;
 
         public Player(GridPos start, float cellSize)
         {
+            _cellSize = cellSize;
             Cell = start;
             _from = start;
             _to = start;
@@ -29,12 +36,38 @@ namespace StoreChase
             WorldPos = new Vector3(start.X * cellSize, 0f, start.Y * cellSize);
         }
 
-        public void Update(GameTime gameTime, GridMap map, float cellSize, in InputState input)
+        // moveDir is a grid step (e.g. (0,-1)) in isometric, or a normalized
+        // world XZ heading (camera-relative, X/Z in X/Y) in first-person;
+        // freeMove selects which interpretation applies.
+        public void Update(GameTime gameTime, GridMap map, Vector2 moveDir, bool freeMove)
+        {
+            if (freeMove != _wasFreeMove)
+            {
+                // Returning to the grid: re-anchor to the nearest cell so the
+                // first grid step starts from a cell center instead of jumping.
+                if (!freeMove)
+                {
+                    _from = Cell;
+                    _to = Cell;
+                    _t = 1f;
+                    WorldPos = new Vector3(Cell.X * _cellSize, 0f, Cell.Y * _cellSize);
+                }
+
+                _wasFreeMove = freeMove;
+            }
+
+            if (freeMove)
+                UpdateFree(gameTime, map, moveDir);
+            else
+                UpdateGrid(gameTime, map, moveDir);
+        }
+
+        private void UpdateGrid(GameTime gameTime, GridMap map, Vector2 move)
         {
             // Only update the held direction when the device reports one, so
             // releasing mid-tile keeps the existing grid-movement feel.
-            if (input.Move != Vector2.Zero)
-                _heldDirection = new Point((int)input.Move.X, (int)input.Move.Y);
+            if (move != Vector2.Zero)
+                _heldDirection = new Point((int)move.X, (int)move.Y);
 
             bool moving = _t < 1f;
 
@@ -57,16 +90,86 @@ namespace StoreChase
                 _t += dt * MoveSpeed;
                 if (_t > 1f) _t = 1f;
 
-                Vector3 fromPos = new(_from.X * cellSize, 0f, _from.Y * cellSize);
-                Vector3 toPos = new(_to.X * cellSize, 0f, _to.Y * cellSize);
+                Vector3 fromPos = new(_from.X * _cellSize, 0f, _from.Y * _cellSize);
+                Vector3 toPos = new(_to.X * _cellSize, 0f, _to.Y * _cellSize);
                 WorldPos = Vector3.Lerp(fromPos, toPos, _t);
 
                 Vector3 delta = toPos - fromPos;
                 if (delta.LengthSquared() > 0.0001f)
-                    FacingAngle = (float)System.Math.Atan2(delta.X, delta.Z);
+                    FacingAngle = (float)Math.Atan2(delta.X, delta.Z);
 
                 if (_t >= 1f) Cell = _to;
             }
+        }
+
+        // Continuous movement along a world heading, with per-axis wall
+        // collision so the player slides along shelves instead of sticking.
+        private void UpdateFree(GameTime gameTime, GridMap map, Vector2 dir)
+        {
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+            if (dir.LengthSquared() > 1f) dir.Normalize();
+
+            Vector2 pos = new(WorldPos.X, WorldPos.Z);
+            Vector2 delta = dir * FreeMoveSpeed * dt;
+
+            Vector2 tryX = new(pos.X + delta.X, pos.Y);
+            if (CanStandAt(map, tryX)) pos = tryX;
+
+            Vector2 tryZ = new(pos.X, pos.Y + delta.Y);
+            if (CanStandAt(map, tryZ)) pos = tryZ;
+
+            WorldPos = new Vector3(pos.X, 0f, pos.Y);
+
+            // The critter AI and the catch check are still grid-based, so keep
+            // Cell pointed at the nearest walkable tile.
+            Cell = NearestWalkableCell(map, pos);
+
+            if (dir.LengthSquared() > 0.0001f)
+                FacingAngle = (float)Math.Atan2(dir.X, dir.Y);
+
+            _heldDirection = Point.Zero;
+        }
+
+        // Treats the player as a circle of FreeRadius and rejects a position
+        // whose bounding box overlaps any shelf cell. Cell centers sit at
+        // multiples of cellSize, so a world coordinate maps to the nearest
+        // cell by rounding.
+        private bool CanStandAt(GridMap map, Vector2 pos)
+        {
+            int x0 = CellIndex(pos.X - FreeRadius);
+            int x1 = CellIndex(pos.X + FreeRadius);
+            int y0 = CellIndex(pos.Y - FreeRadius);
+            int y1 = CellIndex(pos.Y + FreeRadius);
+
+            for (int x = x0; x <= x1; x++)
+                for (int y = y0; y <= y1; y++)
+                    if (!map.IsWalkable(x, y)) return false;
+
+            return true;
+        }
+
+        private int CellIndex(float world) => (int)MathF.Floor(world / _cellSize + 0.5f);
+
+        private GridPos NearestWalkableCell(GridMap map, Vector2 pos)
+        {
+            int cx = Math.Clamp(CellIndex(pos.X), 0, map.Width - 1);
+            int cy = Math.Clamp(CellIndex(pos.Y), 0, map.Height - 1);
+
+            if (map.IsWalkable(cx, cy)) return new GridPos(cx, cy);
+
+            // Rare fallback: the rounded cell is a shelf corner, so search
+            // outward for the closest walkable tile.
+            for (int r = 1; r <= 3; r++)
+                for (int dx = -r; dx <= r; dx++)
+                    for (int dy = -r; dy <= r; dy++)
+                    {
+                        if (Math.Abs(dx) != r && Math.Abs(dy) != r) continue;
+                        int x = cx + dx, y = cy + dy;
+                        if (x >= 0 && y >= 0 && x < map.Width && y < map.Height && map.IsWalkable(x, y))
+                            return new GridPos(x, y);
+                    }
+
+            return new GridPos(cx, cy);
         }
     }
 }

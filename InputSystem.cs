@@ -24,6 +24,11 @@ public class InputSystem
     public IInputSource ActiveSource => _sources[_activeIndex];
     public InputDeviceKind ActiveDevice => ActiveSource.Kind;
 
+    // Requested pointer capture for first-person look. Game1 sets these from
+    // the camera mode; Update forwards them to any source that supports it.
+    public bool MouseLookEnabled { get; set; }
+    public Point MouseLookCenter { get; set; }
+
     public InputSystem(params IInputSource[] sources)
     {
         if (sources.Length == 0)
@@ -40,6 +45,13 @@ public class InputSystem
 
     public void Update(GameTime gameTime)
     {
+        foreach (var source in _sources)
+            if (source is IMouseLookSource mouse)
+            {
+                mouse.MouseLookEnabled = MouseLookEnabled;
+                mouse.MouseLookCenter = MouseLookCenter;
+            }
+
         _polled.Clear();
         foreach (var source in _sources)
             _polled.Add(source.Poll(gameTime));

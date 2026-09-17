@@ -19,24 +19,32 @@ public class SmartAnimalAI : ICritterAI
 
     public GridPos? DecideNextMove(CritterContext context)
     {
+        GridPos? result;
+
         // If we are currently following a planned path, just take the next step
         if (_currentPath.Count > 0)
         {
             var next = _currentPath[0];
             _currentPath.RemoveAt(0);
-            return next;
+            result = next;
+        }
+        else
+        {
+            _replanTimer -= context.DeltaTime;
+            int dist = ManhattanDistance(context.CurrentCell, context.PlayerCell);
+
+            if (dist <= FleeRadius)
+                result = ExecuteFleeLogic(context);
+            else if (dist <= AlertRadius)
+                result = ExecuteAlertLogic(context);
+            else
+                result = ExecuteWanderLogic(context);
         }
 
-        _replanTimer -= context.DeltaTime;
-        int dist = ManhattanDistance(context.CurrentCell, context.PlayerCell);
-
-        if (dist <= FleeRadius)
-            return ExecuteFleeLogic(context);
-
-        if (dist <= AlertRadius)
-            return ExecuteAlertLogic(context);
-
-        return ExecuteWanderLogic(context);
+        // Remember the cell the critter is about to leave, so the next
+        // decision can "double back" to it when a quirk fires.
+        _lastCell = context.CurrentCell;
+        return result;
     }
 
     private GridPos? ExecuteFleeLogic(CritterContext context)
@@ -138,9 +146,45 @@ public class SmartAnimalAI : ICritterAI
 
     private GridPos? ChooseQuirkMove(CritterContext context)
     {
-        // Logic for doubling back or sidestepping...
-        // (Implementation same as your original code using context.CurrentCell/PlayerCell)
-        return null; 
+        // Half the time make a short lateral juke perpendicular to the line
+        // to the player; otherwise double back to the cell we just left.
+        if (_rng.NextDouble() < 0.5f)
+        {
+            var sidestep = TrySidestep(context);
+            if (sidestep.HasValue) return sidestep;
+        }
+
+        if (_lastCell.HasValue)
+        {
+            var last = _lastCell.Value;
+            if (context.Map.IsWalkable(last.X, last.Y) &&
+                ManhattanDistance(last, context.CurrentCell) == 1)
+                return last;
+        }
+        return null;
+    }
+
+    // A lateral move: the direction to the player defines an axis, so the
+    // perpendicular axis is a side-step. Handles both axis-aligned and
+    // diagonal player bearings.
+    private GridPos? TrySidestep(CritterContext context)
+    {
+        int dx = Math.Sign(context.PlayerCell.X - context.CurrentCell.X);
+        int dy = Math.Sign(context.PlayerCell.Y - context.CurrentCell.Y);
+
+        GridPos[] candidates =
+        {
+            new(context.CurrentCell.X + dy, context.CurrentCell.Y - dx),
+            new(context.CurrentCell.X - dy, context.CurrentCell.Y + dx),
+        };
+        return FirstWalkable(context, candidates);
+    }
+
+    private GridPos? FirstWalkable(CritterContext context, GridPos[] candidates)
+    {
+        foreach (var c in candidates)
+            if (context.Map.IsWalkable(c.X, c.Y)) return c;
+        return null;
     }
 
     private GridPos[] GetShuffledDirections()

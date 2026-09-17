@@ -33,6 +33,7 @@ namespace StoreChase
         private readonly StaticMesh _mesh;
         private readonly Vector3[] _basePositions;
         private readonly Vector3[] _baseNormals;
+        private readonly Vector3[] _baseTangents;
         private readonly Leg[] _legs;
         private readonly int[] _legFor;   // per-vertex leg index
         private readonly float[] _weight; // per-vertex 0..1
@@ -44,10 +45,13 @@ namespace StoreChase
             int n = mesh.Vertices.Length;
             _basePositions = new Vector3[n];
             _baseNormals = new Vector3[n];
+            _baseTangents = new Vector3[n];
             for (int i = 0; i < n; i++)
             {
                 _basePositions[i] = mesh.Vertices[i].Position;
                 _baseNormals[i] = mesh.Vertices[i].Normal;
+                Vector4 t = mesh.Vertices[i].Tangent;
+                _baseTangents[i] = new Vector3(t.X, t.Y, t.Z);
             }
 
             (_legs, _legFor, _weight) = AnalyzeLegs(_basePositions);
@@ -76,10 +80,19 @@ namespace StoreChase
                 Vector3 d = _basePositions[i] - leg.Hip;
                 _mesh.Vertices[i].Position = leg.Hip + new Vector3(d.X, d.Y * c - d.Z * s, d.Y * s + d.Z * c);
 
+                // Rotate the normal and tangent by the same swing so the
+                // normal-mapped lighting follows the leg instead of staying
+                // frozen in the base pose.
+                float w4 = _mesh.Vertices[i].Tangent.W;
                 Vector3 n = _baseNormals[i];
                 Vector3 nr = new(n.X, n.Y * c - n.Z * s, n.Y * s + n.Z * c);
                 if (nr.LengthSquared() > 1e-6f) nr.Normalize();
                 _mesh.Vertices[i].Normal = nr;
+
+                Vector3 tg = _baseTangents[i];
+                Vector3 tr = new(tg.X, tg.Y * c - tg.Z * s, tg.Y * s + tg.Z * c);
+                if (tr.LengthSquared() > 1e-6f) tr.Normalize();
+                _mesh.Vertices[i].Tangent = new Vector4(tr, w4);
             }
         }
 

@@ -9,16 +9,19 @@ namespace StoreChase;
 //
 // Mapping:
 //   Left stick / D-pad   -> move (grid, dominant axis only)
-//   Right stick          -> camera pan
+//   Right stick          -> camera pan; also first-person look
 //   Triggers (RT/LT)     -> camera tilt up/down
 //   Shoulders (RB/LB)    -> zoom in/out (continuous)
+//   Y                    -> toggle first-person / isometric
 //   Start                -> restart
 //   Back                 -> exit
 public class GamePadInput : IInputSource
 {
     private const float StickDeadzone = 0.5f;
+    private const float LookRate = 600f; // look units/sec at full stick
 
     private readonly PlayerIndex _playerIndex;
+    private bool _previousToggle;
 
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
     {
@@ -45,6 +48,17 @@ public class GamePadInput : IInputSource
         float zoom = (gp.Buttons.RightShoulder == ButtonState.Pressed ? 1f : 0f)
                    - (gp.Buttons.LeftShoulder == ButtonState.Pressed ? 1f : 0f);
 
+        // The right stick doubles as first-person look. Pan already has the
+        // right signs (X right, Y up), and scaling by dt turns it into the
+        // same per-frame unit the mouse reports. Camera reads whichever of
+        // pan/look its current mode uses.
+        Vector2 look = pan * dt * LookRate;
+
+        // Y flips between isometric and first-person; rising edge only.
+        bool toggleNow = gp.Buttons.Y == ButtonState.Pressed;
+        bool toggle = toggleNow && !_previousToggle;
+        _previousToggle = toggleNow;
+
         return new InputState
         {
             Move = move,
@@ -53,6 +67,8 @@ public class GamePadInput : IInputSource
             // Shoulders are held: scale by dt and a notches-per-second rate so
             // it adds up to the same "wheel notches" unit the mouse reports.
             Zoom = zoom * dt * 2f,
+            Look = look,
+            ToggleCamera = toggle,
             Restart = gp.Buttons.Start == ButtonState.Pressed,
             Exit = gp.Buttons.Back == ButtonState.Pressed,
         };
