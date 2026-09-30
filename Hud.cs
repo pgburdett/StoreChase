@@ -1,0 +1,306 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+
+namespace StoreChase;
+
+// What the HUD needs to know about the world, snapshotted once per frame by
+// Game1. Everything here is read-only: the HUD draws the state, it never
+// writes it back. Passing a snapshot rather than the subsystems themselves is
+// what keeps the HUD from reaching into the game — and what makes it possible
+// to test a HUD frame without a GraphicsDevice.
+public readonly record struct HudState(
+    RunPhase Phase,
+    float ElapsedTime,
+    string EndMessage,
+    int SecuredCount,
+    int TotalCount,
+    bool PlayerCarrying,
+    int StolenCount,
+    AlarmCause AlarmCause,
+    float AlarmLevel,
+    CameraViewMode ViewMode,
+    Matrix ViewProjection,
+    IReadOnlyList<Critter> Critters,
+    float TitlePhase);
+
+// The screen-space overlay: the objective readout, the alarm meter, the
+// control hint, the off-screen thief marker and the end-of-round banner.
+//
+// It owns no game state and makes no decisions. Game1 builds a HudState each
+// frame (see Game1.BuildHudState) and hands it over; this class turns it into
+// pixels. That boundary is the whole point of the split — the HUD is the one
+// part of the frame that is pure output, so it is the part you can reason
+// about without holding the whole simulation in your head.
+public sealed class Hud
+{
+    private readonly SpriteBatch _spriteBatch;
+    private readonly GraphicsDevice _graphicsDevice;
+    private readonly Texture2D _uiPixel;
+    private readonly MessageFeed _feed;
+    private SpriteFont? _font;
+
+    /// <summary>Creates a new HUD with the given graphics resources.</summary>
+    public Hud(SpriteBatch spriteBatch, GraphicsDevice graphicsDevice, Texture2D uiPixel)
+    {
+        _spriteBatch = spriteBatch;
+        _graphicsDevice = graphicsDevice;
+        _uiPixel = uiPixel;
+        _feed = new MessageFeed(EventSystem.Instance);
+    }
+
+    /// <summary>
+    /// The font is loaded from the content pipeline after the HUD is
+    /// constructed (LoadContent runs after Initialize), so it arrives
+    /// separately rather than through the constructor.
+    /// </summary>
+    public SpriteFont? Font
+    {
+        get => _font;
+        set => _font = value;
+    }
+
+    /// <summary>Ages the message feed. Called once per frame from Game1's update loop.</summary>
+    public void Update(float dt) => _feed.Update(dt);
+
+    /// <summary>
+    /// Draws the full HUD overlay: rainbow title, objective panel, alarm meter,
+    /// control hint, thief marker, end banner, and the message feed.
+    /// </summary>
+    public void Draw(in HudState state)
+    {
+        // SpriteBatch draws are 2D-over-3D, fine as a screen-space overlay.
+        _spriteBatch.Begin();
+
+        // The font comes from the content pipeline and could in principle
+        // fail to load; without it there's no text HUD, but the 3D scene
+        // and the alarm bar still draw.
+        if (_font == null)
+        {
+            _spriteBatch.End();
+            _graphicsDevice.DepthStencilState = DepthStencilState.Default;
+            return;
+        }
+
+        DrawRainbowTitle(state);
+        DrawObjectivePanel(state);
+        DrawAlarmMeter(state);
+        DrawHoldHint(state);
+        DrawThiefMarker(state);
+        DrawEndBanner(state);
+
+        // The event feed: newest at the bottom, older ones scroll up and off.
+        _feed.Draw(_spriteBatch, _font,
+            new Vector2(_graphicsDevice.Viewport.Width - 220, 40));
+
+        _spriteBatch.End();
+
+        // Re-enable depth state for next frame's 3D draw (SpriteBatch changes it).
+        _graphicsDevice.DepthStencilState = DepthStencilState.Default;
+    }
+
+    // The objective readout: how much is back, how much is still out, and
+    // the timer. This is the whole scoreboard, so it stays in one place.
+    private void DrawObjectivePanel(in HudState state)
+    {
+        var font = _font!;
+        int secured = state.SecuredCount;
+        int total = state.TotalCount;
+        int carried = state.PlayerCarrying ? 1 : 0;
+        int loose = Math.Max(0, total - secured - carried - state.StolenCount);
+
+        var line = new Vector2(16, 40);
+        const int step = 22;
+
+        _spriteBatch.DrawString(font, $"Time  {state.ElapsedTime:F1}s", line, Color.White);
+        line.Y += step;
+        _spriteBatch.DrawString(font, $"Behind the counter  {secured}/{total}",
+            line, secured == total ? Color.LimeGreen : Color.White);
+        line.Y += step;
+
+        if (state.PlayerCarrying)
+        {
+            _spriteBatch.DrawString(font, "You're carrying something - get to the counter!",
+                line, new Color(240, 200, 90));
+        }
+        else if (state.StolenCount > 0)
+        {
+            _spriteBatch.DrawString(font, $"On the move: {state.StolenCount}", line, new Color(240, 140, 120));
+        }
+        else if (loose > 0)
+        {
+            _spriteBatch.DrawString(font, $"{loose} still on the shelves", line, Color.LightGray);
+        }
+
+        // Species list, so the player can tell who's who.
+        line.Y += step * 2;
+        _spriteBatch.DrawString(font, "In the store:", line, Color.DimGray);
+        line.Y += step;
+        foreach (var critter in state.Critters)
+        {
+            string flag = critter.Carrying ? "  [!] carrying" : "";
+            _spriteBatch.DrawString(font, $"  {critter.Profile.Name}{flag}",
+                line, critter.Profile.Tint);
+            line.Y += step;
+        }
+
+        string view = state.ViewMode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
+        _spriteBatch.DrawString(font, $"[V] view: {view}", new Vector2(16, _graphicsDevice.Viewport.Height - 60), Color.LightGray);
+    }
+
+    // The alarm: a bar that fills as the meter rises, tinted by cause so
+    // you can tell at a glance whether the cat or you are the problem.
+    private void DrawAlarmMeter(in HudState state)
+    {
+        const int width = 260, height = 16;
+        int x = (_graphicsDevice.Viewport.Width - width) / 2;
+        int y = _graphicsDevice.Viewport.Height - 44;
+
+        var fill = state.AlarmCause switch
+        {
+            AlarmCause.Thief => new Color(226, 84, 66),
+            AlarmCause.PlayerCarrying => new Color(230, 176, 64),
+            _ => new Color(96, 176, 112),
+        };
+
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, height), new Color(30, 30, 38));
+        _spriteBatch.Draw(_uiPixel,
+            new Rectangle(x, y, (int)(width * state.AlarmLevel), height), fill);
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, 2), new Color(90, 90, 100));
+
+        string label = state.AlarmCause switch
+        {
+            AlarmCause.Thief => "ALARM - something's being carried off!",
+            AlarmCause.PlayerCarrying => "ALARM - you're carrying it",
+            _ => "Store alarm",
+        };
+        _spriteBatch.DrawString(_font!, label, new Vector2(x, y - 22), fill);
+    }
+
+    // One contextual line of controls, so the keybinds that only matter at
+    // the moment they're useful aren't buried in the README.
+    private void DrawHoldHint(in HudState state)
+    {
+        if (state.Phase != RunPhase.Playing)
+        {
+            _spriteBatch.DrawString(_font!, "[R] new round", new Vector2(16, _graphicsDevice.Viewport.Height - 34), Color.White);
+            return;
+        }
+
+        string hint = state.ViewMode == CameraViewMode.FirstPerson
+            ? "[click] throw a ball    [V] overhead"
+            : "[V] first-person (to aim throws & pin nervous cats)";
+        _spriteBatch.DrawString(_font!, hint, new Vector2(16, _graphicsDevice.Viewport.Height - 34), Color.Gray);
+    }
+
+    /// <summary>
+    /// Marks whichever critter is currently carrying loot, in screen space.
+    ///
+    /// The alarm is a ~24 second fuse and the store is a shelf maze, so
+    /// without a marker the last thirty seconds of a lost round is spent
+    /// hunting for a cat you can't see. When the thief is on screen this is
+    /// a ring around it; when it isn't, it's an arrow pinned to the edge of
+    /// the viewport pointing the way to turn.
+    /// </summary>
+    private void DrawThiefMarker(in HudState state)
+    {
+        var thief = state.Critters.FirstOrDefault(c => c.Carrying);
+        if (thief == null) return;
+
+        var viewport = _graphicsDevice.Viewport;
+        Vector3 target = thief.WorldPos + new Vector3(0f, 1.4f, 0f);
+
+        // Project with the same row-vector convention the shader uses:
+        // mul(pos, View) then mul(..., Projection). The homogeneous divide
+        // by w is left to the caller.
+        Vector4 clip = Vector4.Transform(new Vector4(target, 1f), state.ViewProjection);
+
+        // Behind the camera, or past the far plane: w <= 0 and the point is
+        // on the wrong side of the eye, so there's no direction to point.
+        if (clip.W <= 0.0001f) return;
+
+        var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
+        var projected = new Vector2(
+            (ndc.X * 0.5f + 0.5f) * viewport.Width,
+            (0.5f - ndc.Y * 0.5f) * viewport.Height);
+        bool onScreen = projected.X >= 0 && projected.Y >= 0 &&
+                        projected.X < viewport.Width && projected.Y < viewport.Height;
+
+        if (onScreen)
+        {
+            // A ring of pixels around the cat, so it reads over any floor.
+            int cx = (int)projected.X, cy = (int)projected.Y;
+            for (int a = 0; a < 360; a += 6)
+            {
+                float r = MathHelper.ToRadians(a);
+                _spriteBatch.Draw(_uiPixel,
+                    new Rectangle(cx + (int)(MathF.Cos(r) * 18) - 1, cy + (int)(MathF.Sin(r) * 18) - 1, 3, 3),
+                    new Color(226, 84, 66));
+            }
+        }
+        else
+        {
+            // Clamp the direction to the viewport border. The sign of the
+            // off-screen components is what points the right way.
+            var from = new Vector2(viewport.Width / 2f, viewport.Height / 2f);
+            Vector2 dir = projected - from;
+            if (dir.LengthSquared() < 0.0001f) return;
+            dir = Vector2.Normalize(dir);
+
+            // Walk the ray until it leaves the box, so the marker sits on
+            // the edge however the aspect compares.
+            float tx = dir.X != 0f ? (viewport.Width / 2f) / MathF.Abs(dir.X) : float.MaxValue;
+            float ty = dir.Y != 0f ? (viewport.Height / 2f) / MathF.Abs(dir.Y) : float.MaxValue;
+            float t = MathF.Min(tx, ty) * 0.88f;
+            var edge = from + dir * t;
+
+            _spriteBatch.Draw(_uiPixel,
+                new Rectangle((int)edge.X - 5, (int)edge.Y - 5, 10, 10),
+                new Color(226, 84, 66));
+        }
+
+        // The species name, so the player learns which cat is the trouble.
+        _spriteBatch.DrawString(_font!, thief.Profile.Name,
+            new Vector2(projected.X - 40, projected.Y + 24), new Color(226, 84, 66));
+    }
+
+    private void DrawEndBanner(in HudState state)
+    {
+        if (state.Phase == RunPhase.Playing) return;
+
+        int w = _graphicsDevice.Viewport.Width, h = _graphicsDevice.Viewport.Height;
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, h / 2 - 70, w, 140), new Color(12, 12, 18));
+
+        var colour = state.Phase == RunPhase.Won ? Color.LimeGreen : Color.OrangeRed;
+        string title = state.Phase == RunPhase.Won ? "STORE SECURED" : "SHOPLIFTING SPOTTED";
+        _spriteBatch.DrawString(_font!, title,
+            new Vector2((w - _font!.MeasureString(title).X) / 2f, h / 2f - 40), colour);
+        _spriteBatch.DrawString(_font!, state.EndMessage,
+            new Vector2((w - _font.MeasureString(state.EndMessage).X) / 2f, h / 2f - 8), Color.White);
+        _spriteBatch.DrawString(_font!, $"Recovered {state.SecuredCount}/{state.TotalCount} in {state.ElapsedTime:F1}s",
+            new Vector2((w - _font.MeasureString("Recovered").X) / 2f, h / 2f + 16), Color.LightGray);
+    }
+
+    // "Store Chase" centered at the top of the screen. The base hue comes
+    // from RainbowTitle's background thread; spreading the hue per
+    // character produces the rainbow gradient. Only the read/draw happens
+    // on the game thread, since the graphics device isn't thread-safe.
+    private void DrawRainbowTitle(in HudState state)
+    {
+        const float hueStep = 0.07f; // rainbow spread across the glyphs
+        const float y = 6f;
+
+        float phase = state.TitlePhase;
+        float cursorX = (_graphicsDevice.Viewport.Width - _font!.MeasureString(RainbowTitle.Text).X) / 2f;
+
+        for (int i = 0; i < RainbowTitle.Text.Length; i++)
+        {
+            string glyph = RainbowTitle.Text[i].ToString();
+            _spriteBatch.DrawString(_font, glyph, new Vector2(cursorX, y),
+                RainbowTitle.FromHue(phase + i * hueStep));
+            cursorX += _font.MeasureString(glyph).X;
+        }
+    }
+}

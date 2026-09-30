@@ -15,9 +15,16 @@ namespace StoreChase;
 /// </summary>
 public class Critter
 {
+    /// <summary>The critter's current grid cell.</summary>
     public GridPos Cell { get; private set; }
+
+    /// <summary>World position (X/Z = position, Y = 0 at floor level).</summary>
     public Vector3 WorldPos { get; private set; }
+
+    /// <summary>Facing direction in radians around Y; +Z = 0.</summary>
     public float FacingAngle { get; private set; }
+
+    /// <summary>True while the critter is mid-step between two cells.</summary>
     public bool IsMoving => _isMoving;
 
     /// <summary>The profile this animal was built with: speed, senses, species.</summary>
@@ -37,6 +44,11 @@ public class Critter
     /// <summary>Whether the player's camera is pointed at it.</summary>
     public bool BeingWatched { get; set; }
 
+    /// <summary>Seconds left of stun. While above zero the cat neither moves
+    /// nor makes decisions — it's out of the action but still in the game.
+    /// Set by a ball hit; the game handles the drop.</summary>
+    public bool Stunned => _stunTimer > 0f;
+
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
@@ -44,10 +56,12 @@ public class Critter
     private GridPos _to;
     private float _t;
     private bool _isMoving;
+    private float _stunTimer;
 
     private readonly ICritterAI _ai;
     private readonly float _cellSize;
 
+    /// <summary>Creates a critter at the given start cell with the given AI and profile.</summary>
     public Critter(GridPos start, float cellSize, ICritterAI ai, CritterProfile profile)
     {
         Cell = start;
@@ -60,6 +74,13 @@ public class Critter
     }
 
     /// <summary>
+    /// Stuns the cat for <paramref name="seconds"/>. It drops whatever it was
+    /// carrying (the game handles that) and sits out the stun, then resumes
+    /// as normal. A stun never removes the cat from the game.
+    /// </summary>
+    public void Stun(float seconds) => _stunTimer = MathF.Max(_stunTimer, seconds);
+
+    /// <summary>
     /// Advances the critter one frame. <paramref name="locus"/> supplies the
     /// world facts the AI needs but that this class doesn't own — the player,
     /// the ball, and the loot.
@@ -69,6 +90,14 @@ public class Critter
         if (Tackled) return;
 
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+        // Stunned: tick down and sit out the frame. No movement, no decisions,
+        // no stealing — but the cat is still in the game and still drawn.
+        if (_stunTimer > 0f)
+        {
+            _stunTimer -= dt;
+            return;
+        }
 
         // A collision counts whether the player moved onto the critter or the
         // critter moved onto the player. Checking only on arrival (below) means
@@ -149,7 +178,7 @@ public class Critter
         Carrying: Carrying,
         StolenCount: locus.StolenCount);
 
-    /// <summary>Marks the critter as tackled. The game handles the drop.</summary>
+    /// <summary>Marks the critter as tackled. The game handles the drop and removal.</summary>
     public void Tackle() => Tackled = true;
 }
 

@@ -46,6 +46,15 @@ public record struct CritterContext(
     int StolenCount
 );
 
+/// <summary>
+/// The decision-making half of a critter. Given a <see cref="CritterContext"/>
+/// (a snapshot of the world from the critter's perspective), it returns the
+/// next cell to move to, whether it wants to steal what's underfoot, and what
+/// pose the animation rig should target.
+///
+/// Implementations must be stateless with respect to the game — any memory
+/// (paths, timers) lives on the AI object itself, not in the context.
+/// </summary>
 public interface ICritterAI
 {
     /// <summary>

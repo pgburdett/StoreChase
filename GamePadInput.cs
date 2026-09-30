@@ -25,13 +25,17 @@ public class GamePadInput : IInputSource
     private bool _previousToggle;
     private bool _previousThrow;
 
+    /// <summary>Creates a gamepad input source for the given controller slot.</summary>
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
     {
         _playerIndex = playerIndex;
     }
 
+    /// <summary>Always <see cref="InputDeviceKind.GamePad"/>.</summary>
     public InputDeviceKind Kind => InputDeviceKind.GamePad;
 
+    /// <summary>Polls the gamepad and returns this frame's input state.
+    /// Returns <see cref="InputState.Neutral"/> when no controller is connected.</summary>
     public InputState Poll(GameTime gameTime)
     {
         var gp = GamePad.GetState(_playerIndex);

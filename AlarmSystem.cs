@@ -17,6 +17,7 @@ public class AlarmSystem
     /// <summary>0 = calm, 1 = the round is lost.</summary>
     public float Level { get; private set; }
 
+    /// <summary>True once the meter has reached 1.0 — the round is lost.</summary>
     public bool Tripped => Level >= 1f;
 
     // Rise rates, as a fraction of the meter per second, scaled by how many
@@ -45,8 +46,10 @@ public class AlarmSystem
     /// <summary>Set each frame by Game1 so the HUD can show why it's rising.</summary>
     public AlarmCause Cause { get; private set; }
 
+    /// <summary>Raised when the cause changes (e.g. from Calm to Thief).</summary>
     public event Action<AlarmCause>? Changed;
 
+    /// <summary>Resets the meter to zero and clears the cause.</summary>
     public void Reset()
     {
         Level = 0f;
@@ -54,6 +57,14 @@ public class AlarmSystem
         Cause = AlarmCause.Calm;
     }
 
+    /// <summary>
+    /// Advances the alarm meter one frame.
+    ///
+    /// The meter rises while a critter is carrying something (rate scales with
+    /// how many are in flight) or while the player is carrying something (much
+    /// lower rate). It drains when nothing is out. A short grace period after a
+    /// change in state prevents the meter from spiking on the same frame.
+    /// </summary>
     public void Update(float dt, int stolenCount, bool playerCarrying, bool securedAll)
     {
         if (Tripped) return;
@@ -90,14 +101,27 @@ public class AlarmSystem
         Level = MathHelper.Clamp(Level, 0f, 1f);
     }
 
-    // Called when something changes hands, to hold the meter steady briefly.
+    /// <summary>
+    /// Called when something changes hands, to hold the meter steady briefly.
+    /// This prevents the meter from spiking on the same frame as a pickup or
+    /// tackle, and gives the player a moment to react before the alarm starts
+    /// climbing.
+    /// </summary>
     public void Ping() => _grace = GraceSeconds;
 }
 
+/// <summary>Why the alarm is currently rising (or calm).</summary>
 public enum AlarmCause
 {
+    /// <summary>Nothing is out of place.</summary>
     Calm,
+
+    /// <summary>A critter is carrying something.</summary>
     Thief,
+
+    /// <summary>The player is carrying something.</summary>
     PlayerCarrying,
+
+    /// <summary>Everything is secured — the round is won.</summary>
     Won,
 }

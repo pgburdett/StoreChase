@@ -12,10 +12,19 @@ namespace StoreChase;
 // which in turn reference this instance — so it stays rooted on its own.
 public class RunStats
 {
+    /// <summary>Total rounds started (including the current one).</summary>
     public int RunsStarted { get; private set; }
+
+    /// <summary>Total rounds won.</summary>
     public int Wins { get; private set; }
+
+    /// <summary>Total rounds lost.</summary>
     public int Losses { get; private set; }
+
+    /// <summary>Fastest winning time, or <see cref="float.MaxValue"/> if no wins yet.</summary>
     public float BestWinTime { get; private set; } = float.MaxValue;
+
+    /// <summary>Time of the most recent win.</summary>
     public float LastWinTime { get; private set; }
 
     // How many items each species managed to get away with, across all runs.
@@ -24,6 +33,7 @@ public class RunStats
     // high, and vice versa.
     public Dictionary<string, int> TheftsBySpecies { get; } = new();
 
+    /// <summary>Subscribes to the EventSystem and starts tracking stats.</summary>
     public RunStats(EventSystem events)
     {
         events.Subscribe<GameStartedEvent>(OnGameStarted);

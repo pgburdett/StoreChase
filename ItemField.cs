@@ -23,10 +23,16 @@ public class ItemField
     private readonly List<LootItem> _items = new();
     private readonly Random _rng;
 
+    /// <summary>All loot items in the store.</summary>
     public IReadOnlyList<LootItem> Items => _items;
 
+    /// <summary>Total number of items.</summary>
     public int TotalCount => _items.Count;
+
+    /// <summary>Number of items behind the counter.</summary>
     public int SecuredCount => _items.Count(i => i.IsSecured);
+
+    /// <summary>Number of items currently carried by critters.</summary>
     public int StolenCount => _items.Count(i => i.State == LootState.Carried);
 
     /// <summary>The item the player is carrying, if any.</summary>
@@ -34,9 +40,14 @@ public class ItemField
 
     /// <summary>Raised when a critter picks something up, for audio/HUD.</summary>
     public event Action<LootItem>? ItemStolen;
+
+    /// <summary>Raised when a critter drops something (e.g. after a tackle).</summary>
     public event Action<LootItem>? ItemDropped;
+
+    /// <summary>Raised when an item is secured behind the counter.</summary>
     public event Action<LootItem>? ItemSecured;
 
+    /// <summary>Creates a new ItemField with the given map, cell size, and RNG.</summary>
     public ItemField(GridMap map, float cellSize, Random rng)
     {
         _map = map;
@@ -44,8 +55,10 @@ public class ItemField
         _rng = rng;
     }
 
-    // Scatters items on cells beside the shelves, spread out and away from the
-    // player start so the first one isn't under their feet.
+    /// <summary>
+    /// Scatters items on cells beside the shelves, spread out and away from the
+    /// player start so the first one isn't under their feet.
+    /// </summary>
     public void Spawn(int count, GridPos avoidNear)
     {
         _items.Clear();
@@ -73,6 +86,7 @@ public class ItemField
         }
     }
 
+    /// <summary>Resets all items to the Loose state (used on round restart).</summary>
     public void Reset()
     {
         foreach (var item in _items)
@@ -100,6 +114,7 @@ public class ItemField
 
     // ---- Transitions -----------------------------------------------------
 
+    /// <summary>Transfers an item to a critter's possession (thieving).</summary>
     public void TakeByCritter(LootItem item, Critter carrier)
     {
         item.State = LootState.Carried;
@@ -108,8 +123,12 @@ public class ItemField
         ItemStolen?.Invoke(item);
     }
 
-    // Tackling: whatever the critter had goes on the floor where it stood. The
-    // critter is released by Game1, not here.
+    /// <summary>
+    /// Tackling: whatever the critter had goes on the floor where it stood.
+    /// The critter is released by Game1, not here. A drop on a counter cell is
+    /// secured rather than dropped, so a thief tackled at the till still counts
+    /// as caught.
+    /// </summary>
     public void DropFrom(Critter carrier, GridPos where)
     {
         var carried = _items.FirstOrDefault(i => i.Carrier == carrier && i.State == LootState.Carried);
@@ -131,7 +150,9 @@ public class ItemField
         ItemDropped?.Invoke(carried);
     }
 
-    // The player walking onto an item. Returns it if something was picked up.
+    /// <summary>
+    /// The player walking onto an item. Returns it if something was picked up.
+    /// </summary>
     public LootItem? TryPickUp(GridPos playerCell)
     {
         if (Held != null) return null;
@@ -146,8 +167,10 @@ public class ItemField
         return item;
     }
 
-    // The player reaching the counter. Secures whatever they're holding, or a
-    // loose item that happens to be lying on the counter.
+    /// <summary>
+    /// The player reaching the counter. Secures whatever they're holding, or a
+    /// loose item that happens to be lying on the counter.
+    /// </summary>
     public bool TrySecure(GridPos playerCell)
     {
         if (!_map.IsCounter(playerCell.X, playerCell.Y)) return false;
@@ -184,8 +207,10 @@ public class ItemField
 
     // ---- Per-frame -------------------------------------------------------
 
-    // Keeps carried/held items attached to whoever has them, with a slight bob
-    // so the loot reads as being held rather than fused to the sprite.
+    /// <summary>
+    /// Keeps carried/held items attached to whoever has them, with a slight bob
+    /// so the loot reads as being held rather than fused to the sprite.
+    /// </summary>
     public void Update(float dt, GridPos playerCell, float carryHeight)
     {
         foreach (var item in _items)
@@ -220,5 +245,6 @@ public class ItemField
         }
     }
 
+    /// <summary>True when every item is behind the counter (the win condition).</summary>
     public bool AllSecured => _items.Count > 0 && _items.All(i => i.IsSecured);
 }

@@ -4,8 +4,10 @@ using System.Linq;
 
 namespace StoreChase;
 
+/// <summary>Base class for all events published through the EventSystem.</summary>
 public abstract class BaseEvent
 {
+    /// <summary>When this event was published.</summary>
     public DateTime Timestamp { get; } = DateTime.Now;
 }
 
@@ -58,6 +60,13 @@ public sealed class ItemSecuredEvent : BaseEvent
 {
 }
 
+/// <summary>
+/// A thread-safe publish/subscribe event bus. Game1 publishes gameplay events
+/// (game started, won, lost, item stolen/secured); subscribers like RunStats
+/// and MessageFeed react. Handlers are invoked synchronously on the publishing
+/// thread, and a handler that throws is caught and logged so one bad
+/// subscriber can't break the game.
+/// </summary>
 public class EventSystem
 {
 // 1. Thread-safe Singleton using Lazy<T>
@@ -97,6 +106,7 @@ public class EventSystem
     {
     }
 
+    /// <summary>Subscribes a handler to events of type TEvent.</summary>
     public void Subscribe<TEvent>(Action<TEvent> handler) where TEvent : BaseEvent
     {
         lock (_lock)
@@ -112,6 +122,7 @@ public class EventSystem
         }
     }
 
+    /// <summary>Unsubscribes a previously-registered handler from events of type TEvent.</summary>
     public void Unsubscribe<TEvent>(Action<TEvent> handler) where TEvent : BaseEvent
     {
         lock (_lock)
@@ -131,6 +142,11 @@ public class EventSystem
         }
     }
 
+    /// <summary>
+    /// Publishes an event to all subscribed handlers. Handlers are invoked
+    /// synchronously on the calling thread. A handler that throws is caught
+    /// and logged so one bad subscriber can't break the game.
+    /// </summary>
     public void Publish<TEvent>(TEvent eventData) where TEvent : BaseEvent
     {
         List<ISubscription> handlersToRun;

@@ -13,12 +13,23 @@ namespace StoreChase
     // MonoGame ships no such vertex type (Position+Normal+Texture doesn't
     // carry tangents), so this one is declared here next to the loader that
     // fills it.
+    /// <summary>
+    /// Vertex with a tangent/handedness channel in addition to position,
+    /// normal, and UV — the tangent basis the normal-mapping shader uses.
+    /// </summary>
     public struct VertexPositionNormalTextureTangent : IVertexType
     {
+        /// <summary>Vertex position in model space.</summary>
         public Vector3 Position;
+
+        /// <summary>Vertex normal.</summary>
         public Vector3 Normal;
+
+        /// <summary>Texture coordinate.</summary>
         public Vector2 TextureCoordinate;
-        public Vector4 Tangent; // xyz = tangent, w = handedness (+1/-1)
+
+        /// <summary>Tangent (xyz) and handedness (w = +1/-1).</summary>
+        public Vector4 Tangent;
 
         public VertexPositionNormalTextureTangent(Vector3 position, Vector3 normal, Vector2 texCoord)
         {
@@ -58,18 +69,34 @@ namespace StoreChase
     // FBX with bones) can slot in beside this without reworking how Critter
     // or Game1 consume a mesh: both would expose vertices + a per-frame pose
     // transform, just computed differently under the hood.
+    /// <summary>
+    /// A parsed mesh: vertices, indices, optional textures, and bounds.
+    /// Deliberately has no baked-in world transform, so a future animated
+    /// format can slot in beside this without reworking how Critter or Game1
+    /// consume a mesh.
+    /// </summary>
     public class StaticMesh
     {
+        /// <summary>The mesh's vertices.</summary>
         public VertexPositionNormalTextureTangent[] Vertices { get; }
+
+        /// <summary>The mesh's indices (32-bit, no 65,535 vertex cap).</summary>
         public int[] Indices { get; }
+
+        /// <summary>The diffuse texture, if one was loaded.</summary>
         public Texture2D? DiffuseTexture { get; }
+
+        /// <summary>The normal map texture, if one was baked.</summary>
         public Texture2D? NormalMapTexture { get; }
 
-        // Bounding info in the mesh's own local space, useful for
-        // auto-scaling/centering when placing it in the world.
+        /// <summary>Bounding info in the mesh's own local space, useful for
+        /// auto-scaling/centering when placing it in the world.</summary>
         public Vector3 BoundsMin { get; }
+
+        /// <summary>Bounding info in the mesh's own local space.</summary>
         public Vector3 BoundsMax { get; }
 
+        /// <summary>Creates a new StaticMesh from the given geometry and textures.</summary>
         public StaticMesh(
             VertexPositionNormalTextureTangent[] vertices,
             int[] indices,
@@ -92,27 +119,39 @@ namespace StoreChase
             BoundsMax = max;
         }
 
+        /// <summary>The mesh's size (BoundsMax - BoundsMin).</summary>
         public Vector3 Size => BoundsMax - BoundsMin;
+
+        /// <summary>The mesh's center point.</summary>
         public Vector3 Center => (BoundsMax + BoundsMin) / 2f;
 
-        // Returns the same geometry with textures attached, sharing the vertex
-        // and index arrays. Lets the parser build a mesh without a
-        // GraphicsDevice (see ObjLoader.ParseGeometry) and the texture upload
-        // happen separately.
+        /// <summary>
+        /// Returns the same geometry with textures attached, sharing the vertex
+        /// and index arrays. Lets the parser build a mesh without a
+        /// GraphicsDevice (see ObjLoader.ParseGeometry) and the texture upload
+        /// happen separately.
+        /// </summary>
         public StaticMesh WithTextures(Texture2D? diffuse, Texture2D? normal)
             => new StaticMesh(Vertices, Indices, diffuse, normal);
     }
 
+    /// <summary>
+    /// A small, purpose-built OBJ/MTL loader — not a general-purpose one.
+    /// It assumes what this specific export produces: a single material,
+    /// quad faces, and vt/vn present for every vertex.
+    /// </summary>
     public static class ObjLoader
     {
         // Amplitude of the bump effect when baking the grayscale height map
         // into a tangent-space normal map.
         private const float NormalMapStrength = 4f;
 
-        // Loads an OBJ + its referenced diffuse texture (from the MTL,
-        // map_Kd/map_Ka) and bump map (map_Bump) from disk. `objPath` and
-        // texture paths are resolved relative to each other as written in the
-        // files.
+        /// <summary>
+        /// Loads an OBJ + its referenced diffuse texture (from the MTL,
+        /// map_Kd/map_Ka) and bump map (map_Bump) from disk. `objPath` and
+        /// texture paths are resolved relative to each other as written in the
+        /// files.
+        /// </summary>
         public static StaticMesh Load(GraphicsDevice graphicsDevice, string objPath)
         {
             (StaticMesh mesh, string? diffuseFile, string? bumpFile) = ParseCore(objPath);
@@ -145,10 +184,12 @@ namespace StoreChase
             return mesh.WithTextures(texture, normalMap);
         }
 
-        // Parses the OBJ into geometry only, with no textures and no
-        // GraphicsDevice involved. The animation rig (CatAnimator) only ever
-        // needs vertices, so this is enough to drive it from a tool or a test
-        // outside a graphics context. Use Load for anything that renders.
+        /// <summary>
+        /// Parses the OBJ into geometry only, with no textures and no
+        /// GraphicsDevice involved. The animation rig (CatAnimator) only ever
+        /// needs vertices, so this is enough to drive it from a tool or a test
+        /// outside a graphics context. Use Load for anything that renders.
+        /// </summary>
         public static StaticMesh ParseGeometry(string objPath) => ParseCore(objPath).Mesh;
 
         private readonly record struct ParsedObj(StaticMesh Mesh, string? DiffuseFile, string? BumpFile);

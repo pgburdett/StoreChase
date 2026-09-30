@@ -6,11 +6,21 @@ namespace StoreChase
     // The player moves two ways: grid-locked cell-to-cell in the isometric
     // view, or free world-space in first-person. Game1 resolves the input to a
     // direction (no device APIs here) and picks the mode.
+    /// <summary>
+    /// The player character. Exposes <see cref="WorldPos"/> (X/Z, Y=0) and
+    /// <see cref="Cell"/> for the game's rendering and grid-based AI. Has no
+    /// <c>Draw</c> method — Game1 owns all rendering.
+    /// </summary>
     public class Player
     {
+        /// <summary>The player's current grid cell.</summary>
         public GridPos Cell { get; private set; }
-        public Vector3 WorldPos { get; private set; } // X/Z = position, Y = 0 (floor level)
-        public float FacingAngle { get; private set; } // radians around Y; +Z = 0 (matches Critter)
+
+        /// <summary>World position (X/Z = position, Y = 0 at floor level).</summary>
+        public Vector3 WorldPos { get; private set; }
+
+        /// <summary>Facing direction in radians around Y; +Z = 0 (matches Critter).</summary>
+        public float FacingAngle { get; private set; }
 
         private GridPos _from;
         private GridPos _to;
@@ -24,8 +34,10 @@ namespace StoreChase
         private Point _heldDirection = Point.Zero;
         private bool _wasFreeMove;
 
+        /// <summary>True while the player is mid-step between two cells.</summary>
         public bool IsMoving => _t < 1f;
 
+        /// <summary>Creates a player at the given start cell.</summary>
         public Player(GridPos start, float cellSize)
         {
             _cellSize = cellSize;
@@ -36,9 +48,16 @@ namespace StoreChase
             WorldPos = new Vector3(start.X * cellSize, 0f, start.Y * cellSize);
         }
 
-        // moveDir is a grid step (e.g. (0,-1)) in isometric, or a normalized
-        // world XZ heading (camera-relative, X/Z in X/Y) in first-person;
-        // freeMove selects which interpretation applies.
+        /// <summary>
+        /// Advances the player one frame.
+        /// </summary>
+        /// <param name="gameTime">Current game time (for delta time).</param>
+        /// <param name="map">The grid map (for walkability checks).</param>
+        /// <param name="moveDir">
+        /// A grid step (e.g. (0,-1)) in isometric, or a normalized world XZ
+        /// heading (camera-relative, X/Z in X/Y) in first-person.
+        /// </param>
+        /// <param name="freeMove">Selects which interpretation of <paramref name="moveDir"/> applies.</param>
         public void Update(GameTime gameTime, GridMap map, Vector2 moveDir, bool freeMove)
         {
             if (freeMove != _wasFreeMove)

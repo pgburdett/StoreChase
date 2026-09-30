@@ -11,6 +11,7 @@ namespace StoreChase;
 // thread-safe. Dispose() stops the worker.
 public sealed class RainbowTitle : IDisposable
 {
+    /// <summary>The title text drawn at the top of the screen.</summary>
     public const string Text = "Store Chase";
 
     private const float SpeedHz = 0.25f; // full rainbow cycles per second
@@ -22,6 +23,7 @@ public sealed class RainbowTitle : IDisposable
     private float _phase; // 0..1; written by the worker, read by the game thread
     private double _lastSeconds;
 
+    /// <summary>Starts the background thread that advances the hue phase.</summary>
     public RainbowTitle()
     {
         _worker = new Thread(Run)
@@ -32,7 +34,7 @@ public sealed class RainbowTitle : IDisposable
         _worker.Start();
     }
 
-    // Current hue offset (0..1). Volatile read so the game thread sees updates.
+    /// <summary>Current hue offset (0..1). Volatile read so the game thread sees updates.</summary>
     public float Phase => Volatile.Read(ref _phase);
 
     private void Run()
@@ -51,7 +53,7 @@ public sealed class RainbowTitle : IDisposable
         }
     }
 
-    // Maps a hue (0..1) to a fully saturated, fully bright color (vivid rainbow).
+    /// <summary>Maps a hue (0..1) to a fully saturated, fully bright color (vivid rainbow).</summary>
     public static Color FromHue(float hue)
     {
         hue -= MathF.Floor(hue);
@@ -72,6 +74,7 @@ public sealed class RainbowTitle : IDisposable
         return new Color(r, g, b);
     }
 
+    /// <summary>Stops the background thread and waits for it to finish.</summary>
     public void Dispose()
     {
         _running = false;

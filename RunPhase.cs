@@ -5,7 +5,12 @@ namespace StoreChase;
 // right message without a pile of flags.
 public enum RunPhase
 {
+    /// <summary>The round is still in progress.</summary>
     Playing,
+
+    /// <summary>The player won — every item secured before the alarm filled.</summary>
     Won,
+
+    /// <summary>The alarm filled — the round is lost.</summary>
     Lost,
 }

@@ -23,16 +23,28 @@ public static class StoreTextures
     // for shelf slats, few enough texels that the floor's mip chain is cheap.
     private const int TileSize = 128;
 
+    /// <summary>A complete set of the store's procedurally generated textures.</summary>
     public sealed class Set : IDisposable
     {
+        /// <summary>Floor tiles with grout lines.</summary>
         public Texture2D Floor { get; init; } = null!;
+
+        /// <summary>Shelf boards with shadow gaps and a lit lip.</summary>
         public Texture2D Shelf { get; init; } = null!;
+
+        /// <summary>Cardboard box face for loot.</summary>
         public Texture2D Cardboard { get; init; } = null!;
+
+        /// <summary>Counter surface with a hazard stripe.</summary>
         public Texture2D Counter { get; init; } = null!;
-        // A flat white 1x1, for anything tinted purely by vertex color (the
-        // player, and any mesh that doesn't want a pattern).
+
+        /// <summary>
+        /// A flat white 1x1, for anything tinted purely by vertex color (the
+        /// player, and any mesh that doesn't want a pattern).
+        /// </summary>
         public Texture2D Flat { get; init; } = null!;
 
+        /// <summary>Disposes all textures in the set.</summary>
         public void Dispose()
         {
             Floor?.Dispose();
@@ -43,6 +55,7 @@ public static class StoreTextures
         }
     }
 
+    /// <summary>Builds the complete texture set for the store.</summary>
     public static Set Build(GraphicsDevice device)
     {
         return new Set

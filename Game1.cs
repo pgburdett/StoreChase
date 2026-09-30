@@ -7,11 +7,23 @@ using Microsoft.Xna.Framework.Graphics;
 
 namespace StoreChase
 {
+    /// <summary>
+    /// The main game class. Owns the world (map, player, critters, loot, alarm),
+    /// the camera, the input system, and all rendering.
+    ///
+    /// The frame is split into <see cref="Update"/> (simulation) and
+    /// <see cref="Draw"/> (presentation). Update reads one <see cref="InputState"/>
+    /// from <see cref="InputSystem"/>, advances the player, ball, critters, loot
+    /// and alarm, then checks for win/lose. Draw rebuilds the HUD snapshot and
+    /// renders the 3D scene (floor, shelves, counter, player, loot, ball, cats)
+    /// followed by the 2D overlay.
+    ///
+    /// A round is started by <see cref="StartRound"/>, which is called once from
+    /// <see cref="Initialize"/> and again whenever the player presses R.
+    /// </summary>
     public class Game1 : Game
     {
         private GraphicsDeviceManager _graphics;
-        private SpriteBatch _spriteBatch = null!;
-        private SpriteFont? _font;
 
         private const float CellSize = 2f; // world units per grid cell
         private const float WalkCycleSpeed = 12f; // radians/sec of the player's limb swing
@@ -36,12 +48,16 @@ namespace StoreChase
         private InputSystem _input = null!;
         private RainbowTitle _title = null!;
 
+        // The screen-space overlay. It owns no game state: Game1 snapshots
+        // what it needs each frame (see BuildHudState) and hands it over.
+        // Assigned in LoadContent, once its graphics dependencies exist.
+        private Hud _hud = null!;
+
         // Cube/floor meshes, built once and reused (just repositioned via world matrix).
         private VertexPositionNormalColorTexture[] _wallVerts = null!;
         private VertexPositionNormalColorTexture[] _floorVerts = null!;
         private PersonPart[] _playerParts = null!;
         private float _walkPhase; // drives the player's limb swing
-        private Texture2D _uiPixel = null!;
 
         // Procedurally generated store surfaces (floor tiles, shelf boards,
         // cardboard). One BasicEffect draws them all — the texture bound per
@@ -74,7 +90,6 @@ namespace StoreChase
         // Cached per-frame values shared by the critters and the HUD.
         private GridPos? _ballCell;
         private GridPos? _lootTarget;
-        private int _ballCooldownFrames;
 
         public const int LootCount = 5;
         public const int CritterCount = 3;
@@ -112,6 +127,13 @@ namespace StoreChase
             base.Initialize();
         }
 
+        /// <summary>
+        /// Creates the camera with the map's world-space dimensions.
+        ///
+        /// The camera is constructed once here and driven every frame by
+        /// <see cref="Camera.Update"/>. Isometric is the default view;
+        /// first-person is toggled with V / gamepad Y.
+        /// </summary>
         private void SetupCamera()
         {
             _camera = new Camera(GraphicsDevice, _map.Width * CellSize, _map.Height * CellSize, CellSize);
@@ -120,6 +142,15 @@ namespace StoreChase
         // Spawns the player, a cast of cats, the merchandise and the alarm.
         // Called on startup and on every restart, so a round is always
         // reproducible from this one method.
+        /// <summary>
+        /// Starts a fresh round: spawns the player, a cast of cats, the
+        /// merchandise and the alarm, then loads the critter models.
+        ///
+        /// Called on startup and on every restart, so a round is always
+        /// reproducible from this one method. The cat meshes are keyed on the
+        /// critter objects, so the old cast's meshes must be dropped with the
+        /// cast or every restart leaks one model per cat.
+        /// </summary>
         private void StartRound()
         {
             _player = new Player(new GridPos(1, 1), CellSize);
@@ -151,8 +182,6 @@ namespace StoreChase
             _elapsedTime = 0f;
             _phase = RunPhase.Playing;
             _endMessage = "";
-            _ballCooldownFrames = 0;
-
             // A fresh cast needs a fresh set of animated meshes. Do this after
             // the critters list is rebuilt, since the meshes are keyed on the
             // critter objects. LoadCritterModels is a no-op for critters that
@@ -165,6 +194,14 @@ namespace StoreChase
         // Somewhere apart from the player's start (1,1) and spread out, so the
         // cats don't all pile into one aisle. The far end of the store is the
         // obvious "they're over there" choice.
+        /// <summary>
+        /// Picks spawn cells for the critter cast, spread out and away from the
+        /// player's start so the round opens with a moment of quiet.
+        ///
+        /// Candidates are walkable, not on the counter, and more than 5 cells
+        /// (Manhattan) from the player start. The far half of the store is
+        /// preferred so the cats don't all pile into one aisle.
+        /// </summary>
         private IEnumerable<GridPos> SpawnPoints()
         {
             var start = new GridPos(1, 1);
@@ -186,8 +223,6 @@ namespace StoreChase
 
         protected override void LoadContent()
         {
-            _spriteBatch = new SpriteBatch(GraphicsDevice);
-
             _effect = new BasicEffect(GraphicsDevice)
             {
                 VertexColorEnabled = true,
@@ -215,14 +250,22 @@ namespace StoreChase
             _floorVerts = CubeMesh.BuildFloorQuad(
                 Color.White, floorWidth, floorDepth, floorWidth / CellSize, floorDepth / CellSize);
 
-            _uiPixel = new Texture2D(GraphicsDevice, 1, 1);
-            _uiPixel.SetData(new[] { Color.White });
+            // The HUD takes the sprite batch, the 1x1 white texture and the
+            // font, and draws the overlay from a per-frame snapshot of game
+            // state (see HudState). Both graphics objects belong to the HUD,
+            // so they're created here and handed over rather than kept as
+            // fields; the font arrives just below.
+            var spriteBatch = new SpriteBatch(GraphicsDevice);
+            var uiPixel = new Texture2D(GraphicsDevice, 1, 1);
+            uiPixel.SetData(new[] { Color.White });
+            _hud = new Hud(spriteBatch, GraphicsDevice, uiPixel);
 
             LoadCatModel();
             _propVerts = CubeMesh.Build(Color.White, 1f, 1f);
 
-            // Status/timer text is rendered from this font (see DrawUiOverlay).
-            _font = Content.Load<SpriteFont>("DefaultFont");
+            // Status/timer text is rendered from this font (see Hud). The font
+            // belongs to the HUD, so it's loaded here and handed over.
+            _hud.Font = Content.Load<SpriteFont>("DefaultFont");
 
             // Initialize runs before LoadContent, so the first round's cast was
             // created before the cat geometry existed. Give them their meshes
@@ -382,6 +425,15 @@ namespace StoreChase
             base.Update(gameTime);
         }
 
+        /// <summary>
+        /// Advances the simulation one frame while a round is in progress.
+        ///
+        /// Order matters: the player moves first (so the throw origin and the
+        /// critter AI see the new position), then the ball is thrown/updated,
+        /// then critters act on the post-move world, then loot and the alarm.
+        /// Win/lose is checked last so a same-frame secure-and-trip resolves as
+        /// a loss (the alarm is the harder constraint).
+        /// </summary>
         private void UpdatePlay(GameTime gameTime, in InputState input)
         {
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
@@ -392,34 +444,51 @@ namespace StoreChase
             Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
             _player.Update(gameTime, _map, moveDir, freeMove);
 
-            // Throwing. Only in first person, where "where am I looking" is an
-            // aim; from the isometric camera the throw direction would just be
-            // the movement keys, which is too easy to get wrong.
-            if (input.Throw && freeMove && _ballCooldownFrames <= 0)
+            // Throwing. Uses the camera's facing direction as the aim, which
+            // works in both first-person and isometric modes.
+            if (input.Throw && _ball.State == BallState.Held)
             {
-                // Always thrown where the camera looks, not where the player is
-                // walking. Aiming is the whole point of the throw, and mixing
-                // the two (throwing backwards when you back off) makes it
-                // unpredictable.
                 Vector3 eye = _player.WorldPos + new Vector3(0f, 1.2f, 0f);
                 _ball.Throw(eye, _camera.FacingOnPlane);
-                _ballCooldownFrames = 30;
                 Sfx.Play(SfxId.Throw, volume: 0.4f);
             }
-            if (_ballCooldownFrames > 0) _ballCooldownFrames--;
 
-            bool wasSettled = _ball.Settled;
-            _ball.Update(dt, _map);
+            _ball.Update(dt, _map, _player.Cell);
             _ballCell = _ball.Active ? _ball.Cell : null;
 
             // A bounce is the ball announcing itself, which is the whole point
             // of throwing it: the cats hear it.
-            if (_ball.Active && wasSettled != _ball.Settled)
+            if (_ball.Active && _ball.State == BallState.Thrown)
                 Sfx.PlayAt(SfxId.Bounce, _player.WorldPos, _ball.Position, 18f, 0.5f);
+
+            // A ball that reaches a cat stuns it: the cat drops whatever it was
+            // carrying and sits out the stun, but stays in the game. The ball
+            // explodes on impact, then returns to the player.
+            if (_ball.State == BallState.Thrown)
+            {
+                foreach (var critter in _critters)
+                {
+                    if (critter.Stunned || critter.Cell != _ball.Cell) continue;
+
+                    critter.Stun(3f);
+                    _ball.Explode();
+                    Sfx.Play(SfxId.Tackle, volume: 0.5f);
+
+                    if (critter.Carrying)
+                    {
+                        _items.DropFrom(critter, critter.Cell);
+                        critter.Carrying = false;
+                        Sfx.Play(SfxId.Drop, volume: 0.5f);
+                        _alarm.Ping();
+                    }
+                    break;
+                }
+            }
 
             UpdateCritters(gameTime);
             UpdateLoot(dt);
             UpdateHeartbeat(dt);
+            _hud.Update(dt);
 
             _alarm.Update(dt, _items.StolenCount, _items.Held != null, _items.AllSecured);
             UpdateAlarmAudio(dt);
@@ -437,6 +506,13 @@ namespace StoreChase
         // The alarm meter is the round's clock, so it gets an audible clock too:
         // a blip whose rate climbs as it fills. Starting only once the meter is
         // past a third keeps the early, quiet part of a round silent.
+        /// <summary>
+        /// Drives the alarm blip sound, whose rate climbs as the meter fills.
+        ///
+        /// Starting only once the meter is past a third keeps the early, quiet
+        /// part of a round silent. The interval lerps from 0.9s (at one third
+        /// full) down to about 0.25s (at full).
+        /// </summary>
         private void UpdateAlarmAudio(float dt)
         {
             if (_alarm.Cause == AlarmCause.Calm || _alarm.Level < 0.33f)
@@ -460,6 +536,16 @@ namespace StoreChase
         /// <summary>
         /// The proximity cue: a heartbeat that quickens and rises as the nearest
         /// cat closes in, and stops the moment it's out of range.
+        ///
+        /// This is the one piece of information the isometric camera can't give
+        /// you cheaply — a cat two aisles away is off the edge of a zoomed-in
+        /// view, and a shelf maze has a lot of blind corners. It costs one
+        /// timer, and it means "something is right behind me" is a thing you
+        /// can hear rather than something you have to notice.
+        /// </summary>
+        /// <summary>
+        /// The proximity cue: a heartbeat that quickens and rises as the
+        /// nearest cat closes in, and stops the moment it's out of range.
         ///
         /// This is the one piece of information the isometric camera can't give
         /// you cheaply — a cat two aisles away is off the edge of a zoomed-in
@@ -504,8 +590,19 @@ namespace StoreChase
         private const float HeartbeatRange = 9f; // world units
         private float _heartTimer;
 
+        /// <summary>
+        /// Advances every critter one frame: updates its awareness (can it see
+        /// the player, is it being watched), asks the AI for a move, drives the
+        /// animation rig, and removes it from the game if it was tackled.
+        ///
+        /// The <see cref="CritterLocus"/> is rebuilt each frame because it
+        /// captures the current ball cell, loot target and stolen count — all of
+        /// which can change at any moment.
+        /// </summary>
         private void UpdateCritters(GameTime gameTime)
         {
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
             // Rebuilt each frame: it's a struct of two delegates, and it keeps
             // the per-critter data (sight, being watched) out of the shared
             // context.
@@ -523,6 +620,14 @@ namespace StoreChase
                 var critter = _critters[i];
                 UpdateAwareness(critter);
                 critter.Update(gameTime, locus);
+
+                // Drive the rig here, in the update loop, not in Draw: it
+                // rewrites the mesh's vertices in place (see CatAnimator), so
+                // it is a state change and belongs with the other updates.
+                // The head tracks the player once they've been noticed, which
+                // is what gives the cat a sense of seeing you.
+                if (_catAnims.TryGetValue(critter, out var anim))
+                    anim.Update(BuildCatAnimInput(critter, dt));
 
                 if (critter.Tackled)
                 {
@@ -548,6 +653,17 @@ namespace StoreChase
         // Works out, per critter, whether it can see the player and whether the
         // player is looking at it. Both feed the AI, and the first-person camera
         // being a way to pin a Nervous cat depends on the second.
+        /// <summary>
+        /// Updates what a critter knows about the player this frame.
+        ///
+        /// <see cref="Critter.CanSeePlayer"/> is line-of-sight plus the critter's
+        /// vision radius — it gates the AI's alert/flee behaviour.
+        /// <see cref="Critter.BeingWatched"/> is whether the camera's view cone
+        /// contains the critter — it's what makes a Nervous cat freeze.
+        ///
+        /// The two are deliberately separate: the first is what the AI reacts to,
+        /// the second is what pins a Nervous cat in place.
+        /// </summary>
         private void UpdateAwareness(Critter critter)
         {
             int dist = Math.Abs(critter.Cell.X - _player.Cell.X) + Math.Abs(critter.Cell.Y - _player.Cell.Y);
@@ -571,6 +687,13 @@ namespace StoreChase
                 _camera.IsInViewCone(_player.WorldPos + new Vector3(0f, eyeHeight, 0f), critter.WorldPos);
         }
 
+        /// <summary>
+        /// Performs the actual loot transfer when a critter decides to steal.
+        ///
+        /// The AI only *decides* to steal (see <see cref="ICritterAI.WantsToSteal"/>);
+        /// this method performs the transfer so possession rules stay out of
+        /// the AI. Returns true if something was taken.
+        /// </summary>
         private bool TrySteal(Critter critter)
         {
             var item = _items.LooseAt(critter.Cell);
@@ -584,6 +707,15 @@ namespace StoreChase
         }
 
         // Player-side loot: pick up what's underfoot, secure it at the counter.
+        /// <summary>
+        /// Handles player-side loot interactions and per-frame item positions.
+        ///
+        /// Pickup is a rising action (step onto a loose item while hands are
+        /// free). Secure is a state (stand on the counter while holding, or
+        /// drop a loose item onto the counter). Item positions are then updated
+        /// so carried/held items follow their carrier and secured items stack on
+        /// the counter.
+        /// </summary>
         private void UpdateLoot(float dt)
         {
             if (_items.Held == null)
@@ -607,6 +739,11 @@ namespace StoreChase
             _lootTarget = _items.NearestLoose(_player.Cell)?.Cell;
         }
 
+        /// <summary>
+        /// Ends the current round with a win or loss, plays the appropriate
+        /// sting, publishes the corresponding event, and records the final
+        /// time / secured count for the end banner.
+        /// </summary>
         private void EndRound(RunPhase phase, string message)
         {
             _phase = phase;
@@ -653,13 +790,20 @@ namespace StoreChase
             DrawLoot();
             DrawBall();
             DrawCritters(gameTime);
-            DrawUiOverlay();
+            _hud.Draw(BuildHudState());
 
             base.Draw(gameTime);
         }
 
         // The till: a low slab along the counter cells. Drawn as a flat
         // decal-ish box rather than a shelf so it doesn't block sightlines.
+        /// <summary>
+        /// Draws the front counter as a low slab along the counter cells.
+        ///
+        /// Drawn as a flat decal-ish box rather than a shelf so it doesn't
+        /// block sightlines. The counter is the player's goal — items secured
+        /// here count toward winning.
+        /// </summary>
         private void DrawCounter()
         {
             for (int x = GridMap.CounterStart; x <= GridMap.CounterEnd; x++)
@@ -675,6 +819,14 @@ namespace StoreChase
         // secured so the recovered pile reads at a glance. Anything a critter
         // is carrying is drawn with that critter instead (see DrawCritters) —
         // what a cat is holding is the single most important thing on screen.
+        /// <summary>
+        /// Draws every loot item that isn't being carried by a critter.
+        ///
+        /// Items a critter is carrying are drawn with that critter instead (see
+        /// <see cref="DrawCritters"/>) — what a cat is holding is the single
+        /// most important thing on screen. Secured items are scaled up slightly
+        /// so the recovered pile reads at a glance.
+        /// </summary>
         private void DrawLoot()
         {
             foreach (var item in _items.Items)
@@ -691,9 +843,29 @@ namespace StoreChase
             DrawMesh(_propVerts, world, _textures.Cardboard, tint);
         }
 
+        /// <summary>
+        /// Draws the ball and its particles.
+        ///
+        /// The ball itself is only visible while <see cref="BallState.Thrown"/>
+        /// — during Exploding/Paused/Returning the particles are the show.
+        /// The ball spins about the axis perpendicular to its travel so it
+        /// reads as rolling rather than sliding.
+        /// </summary>
         private void DrawBall()
         {
-            if (!_ball.Active) return;
+            if (_ball.State == BallState.Held) return;
+
+            // Explosion / return particles: small cubes flying out or converging.
+            foreach (var p in _ball.Particles)
+            {
+                var particleWorld = Matrix.CreateScale(0.12f, 0.12f, 0.12f)
+                            * Matrix.CreateTranslation(p.Position);
+                DrawMesh(_propVerts, particleWorld, _textures.Flat, p.Color);
+            }
+
+            // The ball itself is hidden while exploding / paused / returning —
+            // the particles are the show during those states.
+            if (_ball.State != BallState.Thrown) return;
 
             // A rolling ball: spin it about the axis perpendicular to its travel
             // so it reads as rolling rather than sliding.
@@ -712,6 +884,15 @@ namespace StoreChase
             DrawMesh(_propVerts, world, _textures.Flat, new Color(226, 92, 78));
         }
 
+        /// <summary>
+        /// Draws the procedural humanoid player.
+        ///
+        /// The walk cycle is advanced while moving and eased back to neutral
+        /// when idle, so limbs don't freeze mid-stride. Each limb swings around
+        /// its joint pivot (shoulder/hip) — see <see cref="PersonMesh"/> for
+        /// the part layout. The player is skipped entirely in first-person mode
+        /// (the camera sits inside the head).
+        /// </summary>
         private void DrawPlayer(GameTime gameTime)
         {
             // The first-person camera sits inside the player's head, so skip
@@ -756,21 +937,23 @@ namespace StoreChase
         // Draws every critter. Each has its own mesh and rig (see
         // LoadCritterModels) but they share the effect, its textures and its
         // parameters, which are re-pushed per cat.
+        /// <summary>
+        /// Draws every critter with its own mesh, rig and shader parameters.
+        ///
+        /// Each critter has its own parsed copy of the cat geometry (~36k
+        /// vertices) because the animation rig rewrites vertices in place each
+        /// frame — sharing one mesh would make every cat adopt the last one
+        /// drawn. The world matrix order is: normalize the raw model, scale to
+        /// the species' size, face the travel direction, then place in the
+        /// world.
+        /// </summary>
         private void DrawCritters(GameTime gameTime)
         {
-            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
             Vector3 cameraPos = Matrix.Invert(_camera.View).Translation;
 
             foreach (var critter in _critters)
             {
                 if (!_catMeshes.TryGetValue(critter, out var mesh)) continue;
-                if (!_catAnims.TryGetValue(critter, out var anim)) continue;
-
-                // Drive the rig before drawing; it rewrites the mesh's vertices
-                // in place (see CatAnimator). The head tracks the player when
-                // they've been noticed, which is what gives the cat a sense of
-                // seeing you.
-                anim.Update(BuildCatAnimInput(critter, dt));
 
                 // Order matters: normalize the raw model (transform), scale to
                 // this species' size, face its travel direction (rotation),
@@ -820,6 +1003,15 @@ namespace StoreChase
         // expressed in the cat's own frame (0 = its facing, + = to its right)
         // because the rig works in model space, and the model's +X axis ends up
         // as the cat's left after BuildCritterModelTransform.
+        /// <summary>
+        /// Assembles the per-frame animation request for a critter.
+        ///
+        /// The head-look yaw is expressed in the cat's own frame (0 = its
+        /// facing, + = to its right) because the rig works in model space, and
+        /// the model's +X axis ends up as the cat's left after
+        /// <see cref="BuildCritterModelTransform"/>. A stunned cat is forced
+        /// into the Startle pose regardless of what the AI last decided.
+        /// </summary>
         private CatAnimInput BuildCatAnimInput(Critter critter, float dt)
         {
             Vector3 toPlayer = _player.WorldPos - critter.WorldPos;
@@ -841,9 +1033,24 @@ namespace StoreChase
                                          -0.4f, 0.4f);
             }
 
-            return new CatAnimInput(critter.Pose, critter.IsMoving, hasTarget, yaw, pitch, dt);
+            // A stunned cat stands still and looks startled, whatever the AI last
+            // wanted it to do.
+            var pose = critter.Stunned ? CatPose.Startle : critter.Pose;
+            bool moving = critter.IsMoving && !critter.Stunned;
+            return new CatAnimInput(pose, moving, hasTarget, yaw, pitch, dt);
         }
 
+        /// <summary>
+        /// Draws a mesh with the shared <see cref="BasicEffect"/>.
+        ///
+        /// <see cref="BasicEffect.DiffuseColor"/> is sticky state that
+        /// multiplies the texture, so it is reset to white (or the supplied
+        /// tint) on every draw — a tinted prop would otherwise leave the
+        /// shelves behind it in the same colour. The sampler is set to
+        /// anisotropic wrap because every generated texture has a complete mip
+        /// chain and the tilted perspective view looks along the floor at a
+        /// grazing angle.
+        /// </summary>
         private void DrawMesh(
             VertexPositionNormalColorTexture[] verts, Matrix world, Texture2D texture, Color? tint = null)
         {
@@ -869,235 +1076,24 @@ namespace StoreChase
             }
         }
 
-        private void DrawUiOverlay()
-        {
-            // SpriteBatch draws are 2D-over-3D, fine as a screen-space overlay.
-            _spriteBatch.Begin();
-
-            // The font comes from the content pipeline and could in principle
-            // fail to load; without it there's no text HUD, but the 3D scene
-            // and the alarm bar still draw.
-            if (_font == null)
-            {
-                _spriteBatch.End();
-                GraphicsDevice.DepthStencilState = DepthStencilState.Default;
-                return;
-            }
-
-            DrawRainbowTitle(_font);
-            DrawObjectivePanel();
-            DrawAlarmMeter();
-            DrawHoldHint();
-            DrawThiefMarker();
-            DrawEndBanner();
-
-            _spriteBatch.End();
-
-            // Re-enable depth state for next frame's 3D draw (SpriteBatch changes it).
-            GraphicsDevice.DepthStencilState = DepthStencilState.Default;
-        }
-
-        // The objective readout: how much is back, how much is still out, and
-        // the timer. This is the whole scoreboard, so it stays in one place.
-        private void DrawObjectivePanel()
-        {
-            var font = _font!;
-            int secured = _items.SecuredCount;
-            int total = _items.TotalCount;
-            int carried = _items.Held != null ? 1 : 0;
-            int loose = Math.Max(0, total - secured - carried - _items.StolenCount);
-
-            var line = new Vector2(16, 40);
-            const int step = 22;
-
-            _spriteBatch.DrawString(font, $"Time  {_elapsedTime:F1}s", line, Color.White);
-            line.Y += step;
-            _spriteBatch.DrawString(font, $"Behind the counter  {secured}/{total}",
-                line, secured == total ? Color.LimeGreen : Color.White);
-            line.Y += step;
-
-            if (_items.Held != null)
-            {
-                _spriteBatch.DrawString(font, "You're carrying something - get to the counter!",
-                    line, new Color(240, 200, 90));
-            }
-            else if (_items.StolenCount > 0)
-            {
-                _spriteBatch.DrawString(font, $"On the move: {_items.StolenCount}", line, new Color(240, 140, 120));
-            }
-            else if (loose > 0)
-            {
-                _spriteBatch.DrawString(font, $"{loose} still on the shelves", line, Color.LightGray);
-            }
-
-            // Species list, so the player can tell who's who.
-            line.Y += step * 2;
-            _spriteBatch.DrawString(font, "In the store:", line, Color.DimGray);
-            line.Y += step;
-            foreach (var critter in _critters)
-            {
-                string flag = critter.Carrying ? "  [!] carrying" : "";
-                _spriteBatch.DrawString(font, $"  {critter.Profile.Name}{flag}",
-                    line, critter.Profile.Tint);
-            }
-
-            string view = _camera.Mode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
-            _spriteBatch.DrawString(font, $"[V] view: {view}", new Vector2(16, GraphicsDevice.Viewport.Height - 60), Color.LightGray);
-        }
-
-        // The alarm: a bar that fills as the meter rises, tinted by cause so
-        // you can tell at a glance whether the cat or you are the problem.
-        private void DrawAlarmMeter()
-        {
-            const int width = 260, height = 16;
-            int x = (GraphicsDevice.Viewport.Width - width) / 2;
-            int y = GraphicsDevice.Viewport.Height - 44;
-
-            var fill = _alarm.Cause switch
-            {
-                AlarmCause.Thief => new Color(226, 84, 66),
-                AlarmCause.PlayerCarrying => new Color(230, 176, 64),
-                _ => new Color(96, 176, 112),
-            };
-
-            _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, height), new Color(30, 30, 38));
-            _spriteBatch.Draw(_uiPixel,
-                new Rectangle(x, y, (int)(width * _alarm.Level), height), fill);
-            _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, 2), new Color(90, 90, 100));
-
-            string label = _alarm.Cause switch
-            {
-                AlarmCause.Thief => "ALARM - something's being carried off!",
-                AlarmCause.PlayerCarrying => "ALARM - you're carrying it",
-                _ => "Store alarm",
-            };
-            _spriteBatch.DrawString(_font!, label, new Vector2(x, y - 22), fill);
-        }
-
-        // One contextual line of controls, so the keybinds that only matter at
-        // the moment they're useful aren't buried in the README.
-        private void DrawHoldHint()
-        {
-            if (_phase != RunPhase.Playing)
-            {
-                _spriteBatch.DrawString(_font!, "[R] new round", new Vector2(16, GraphicsDevice.Viewport.Height - 34), Color.White);
-                return;
-            }
-
-            string hint = _camera.Mode == CameraViewMode.FirstPerson
-                ? "[click] throw a ball    [V] overhead"
-                : "[V] first-person (to aim throws & pin nervous cats)";
-            _spriteBatch.DrawString(_font!, hint, new Vector2(16, GraphicsDevice.Viewport.Height - 34), Color.Gray);
-        }
-
-        /// <summary>
-        /// Marks whichever critter is currently carrying loot, in screen space.
-        ///
-        /// The alarm is a ~24 second fuse and the store is a shelf maze, so
-        /// without a marker the last thirty seconds of a lost round is spent
-        /// hunting for a cat you can't see. When the thief is on screen this is
-        /// a ring around it; when it isn't, it's an arrow pinned to the edge of
-        /// the viewport pointing the way to turn.
-        /// </summary>
-        private void DrawThiefMarker()
-        {
-            var thief = _critters.FirstOrDefault(c => c.Carrying);
-            if (thief == null) return;
-
-            var viewport = GraphicsDevice.Viewport;
-            Vector3 target = thief.WorldPos + new Vector3(0f, 1.4f, 0f);
-
-            // Project with the same row-vector convention the shader uses:
-            // mul(pos, View) then mul(..., Projection). The homogeneous divide
-            // by w is left to the caller.
-            Vector4 clip = Vector4.Transform(new Vector4(target, 1f), _camera.ViewProjection);
-
-            // Behind the camera, or past the far plane: w <= 0 and the point is
-            // on the wrong side of the eye, so there's no direction to point.
-            if (clip.W <= 0.0001f) return;
-
-            var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
-            var projected = new Vector2(
-                (ndc.X * 0.5f + 0.5f) * viewport.Width,
-                (0.5f - ndc.Y * 0.5f) * viewport.Height);
-            bool onScreen = projected.X >= 0 && projected.Y >= 0 &&
-                            projected.X < viewport.Width && projected.Y < viewport.Height;
-
-            if (onScreen)
-            {
-                // A ring of pixels around the cat, so it reads over any floor.
-                int cx = (int)projected.X, cy = (int)projected.Y;
-                for (int a = 0; a < 360; a += 6)
-                {
-                    float r = MathHelper.ToRadians(a);
-                    _spriteBatch.Draw(_uiPixel,
-                        new Rectangle(cx + (int)(MathF.Cos(r) * 18) - 1, cy + (int)(MathF.Sin(r) * 18) - 1, 3, 3),
-                        new Color(226, 84, 66));
-                }
-            }
-            else
-            {
-                // Clamp the direction to the viewport border. The sign of the
-                // off-screen components is what points the right way.
-                var from = new Vector2(viewport.Width / 2f, viewport.Height / 2f);
-                Vector2 dir = projected - from;
-                if (dir.LengthSquared() < 0.0001f) return;
-                dir = Vector2.Normalize(dir);
-
-                // Walk the ray until it leaves the box, so the marker sits on
-                // the edge however the aspect compares.
-                float tx = dir.X != 0f ? (viewport.Width / 2f) / MathF.Abs(dir.X) : float.MaxValue;
-                float ty = dir.Y != 0f ? (viewport.Height / 2f) / MathF.Abs(dir.Y) : float.MaxValue;
-                float t = MathF.Min(tx, ty) * 0.88f;
-                var edge = from + dir * t;
-
-                _spriteBatch.Draw(_uiPixel,
-                    new Rectangle((int)edge.X - 5, (int)edge.Y - 5, 10, 10),
-                    new Color(226, 84, 66));
-            }
-
-            // The species name, so the player learns which cat is the trouble.
-            _spriteBatch.DrawString(_font!, thief.Profile.Name,
-                new Vector2(projected.X - 40, projected.Y + 24), new Color(226, 84, 66));
-        }
-
-        private void DrawEndBanner()
-        {
-            if (_phase == RunPhase.Playing) return;
-
-            int w = GraphicsDevice.Viewport.Width, h = GraphicsDevice.Viewport.Height;
-            _spriteBatch.Draw(_uiPixel, new Rectangle(0, h / 2 - 70, w, 140), new Color(12, 12, 18));
-
-            var colour = _phase == RunPhase.Won ? Color.LimeGreen : Color.OrangeRed;
-            string title = _phase == RunPhase.Won ? "STORE SECURED" : "SHOPLIFTING SPOTTED";
-            _spriteBatch.DrawString(_font!, title,
-                new Vector2((w - _font!.MeasureString(title).X) / 2f, h / 2f - 40), colour);
-            _spriteBatch.DrawString(_font!, _endMessage,
-                new Vector2((w - _font.MeasureString(_endMessage).X) / 2f, h / 2f - 8), Color.White);
-            _spriteBatch.DrawString(_font!, $"Recovered {_items.SecuredCount}/{_items.TotalCount} in {_elapsedTime:F1}s",
-                new Vector2((w - _font.MeasureString("Recovered").X) / 2f, h / 2f + 16), Color.LightGray);
-        }
-
-        // "Store Chase" centered at the top of the screen. The base hue comes
-        // from RainbowTitle's background thread; spreading the hue per
-        // character produces the rainbow gradient. Only the read/draw happens
-        // on the game thread, since the graphics device isn't thread-safe.
-        private void DrawRainbowTitle(SpriteFont font)
-        {
-            const float hueStep = 0.07f; // rainbow spread across the glyphs
-            const float y = 6f;
-
-            float phase = _title.Phase;
-            float cursorX = (GraphicsDevice.Viewport.Width - font.MeasureString(RainbowTitle.Text).X) / 2f;
-
-            for (int i = 0; i < RainbowTitle.Text.Length; i++)
-            {
-                string glyph = RainbowTitle.Text[i].ToString();
-                _spriteBatch.DrawString(font, glyph, new Vector2(cursorX, y),
-                    RainbowTitle.FromHue(phase + i * hueStep));
-                cursorX += font.MeasureString(glyph).X;
-            }
-        }
+        // Snapshots everything the HUD needs for one frame. The HUD is
+        // read-only: it draws the state, it never writes it back. Passing a
+        // snapshot rather than the subsystems themselves is what keeps the
+        // HUD from reaching into the game.
+        private HudState BuildHudState() => new(
+            Phase: _phase,
+            ElapsedTime: _elapsedTime,
+            EndMessage: _endMessage,
+            SecuredCount: _items.SecuredCount,
+            TotalCount: _items.TotalCount,
+            PlayerCarrying: _items.Held != null,
+            StolenCount: _items.StolenCount,
+            AlarmCause: _alarm.Cause,
+            AlarmLevel: _alarm.Level,
+            ViewMode: _camera.Mode,
+            ViewProjection: _camera.ViewProjection,
+            Critters: _critters,
+            TitlePhase: _title.Phase);
 
         protected override void UnloadContent()
         {

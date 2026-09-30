@@ -13,19 +13,35 @@ namespace StoreChase;
 // the same unit), right/up positive.
 public readonly struct InputState
 {
+    /// <summary>Grid movement: X = +1 right, Y = +1 down (screen/grid space).</summary>
     public Vector2 Move { get; init; }
+
+    /// <summary>Camera panning offset, in screen space.</summary>
     public Vector2 CameraPan { get; init; }
+
+    /// <summary>Camera tilt input: +1 = tilt up, -1 = tilt down.</summary>
     public float Tilt { get; init; }
+
+    /// <summary>Mouse wheel notches this frame (or gamepad equivalent).</summary>
     public float Zoom { get; init; }
+
+    /// <summary>First-person look delta (mouse pixels or gamepad stick scaled to the same unit), right/up positive.</summary>
     public Vector2 Look { get; init; }
+
+    /// <summary>Toggle between isometric and first-person camera. Rising edge.</summary>
     public bool ToggleCamera { get; init; }
+
+    /// <summary>Restart the round. Held (not edge-triggered).</summary>
     public bool Restart { get; init; }
+
+    /// <summary>Exit the game. Held.</summary>
     public bool Exit { get; init; }
 
     /// <summary>Throw the ball. A rising edge, so holding the button doesn't
     /// fire one every frame.</summary>
     public bool Throw { get; init; }
 
+    /// <summary>A neutral (all-zero) input state, used when no device is connected.</summary>
     public static InputState Neutral => default;
 
     // True when this device did anything this frame. Used by InputSystem to

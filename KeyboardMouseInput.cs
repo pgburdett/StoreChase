@@ -14,11 +14,17 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
     private bool _previousThrow;
     private bool _mouseCaptured;
 
+    /// <summary>Always <see cref="InputDeviceKind.KeyboardMouse"/>.</summary>
     public InputDeviceKind Kind => InputDeviceKind.KeyboardMouse;
 
+    /// <summary>Whether the pointer should be captured for relative look input.
+    /// Set by Game1 based on the camera mode.</summary>
     public bool MouseLookEnabled { get; set; }
+
+    /// <summary>The screen center to re-center the pointer to while captured.</summary>
     public Point MouseLookCenter { get; set; }
 
+    /// <summary>Polls the keyboard and mouse and returns this frame's input state.</summary>
     public InputState Poll(GameTime gameTime)
     {
         var kb = Keyboard.GetState();

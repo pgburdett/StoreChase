@@ -15,15 +15,27 @@ namespace StoreChase
 
     // Single source of truth for camera state and controls. Game1 used to
     // own this math inline; the values below match that validated behavior.
+    /// <summary>
+    /// Single source of truth for camera state and controls. Game1 used to
+    /// own this math inline; the values below match that validated behavior.
+    ///
+    /// Two modes: Isometric (default) is an orthographic top-down view that
+    /// can pan, zoom and tilt into a perspective view. FirstPerson is a 60°
+    /// perspective camera at the player's head with mouse-look yaw/pitch.
+    /// </summary>
     public class Camera
     {
+        /// <summary>The current view matrix.</summary>
         public Matrix View { get; private set; } = Matrix.Identity;
+
+        /// <summary>The current projection matrix.</summary>
         public Matrix Projection { get; private set; } = Matrix.Identity;
 
         /// <summary>View * Projection, for projecting world points to screen
         /// space (the HUD's off-screen thief marker).</summary>
         public Matrix ViewProjection => View * Projection;
 
+        /// <summary>The current camera mode.</summary>
         public CameraViewMode Mode { get; private set; } = CameraViewMode.Isometric;
 
         // Pan is an offset (in world units) applied to where the camera
@@ -72,6 +84,7 @@ namespace StoreChase
             UpdateCameraMatrices();
         }
 
+        /// <summary>Resets pan, zoom and tilt to their defaults.</summary>
         public void Reset()
         {
             _panOffset = Vector2.Zero;
@@ -136,6 +149,10 @@ namespace StoreChase
             }
         }
 
+        /// <summary>
+        /// Advances the camera one frame. Handles the camera-mode toggle,
+        /// then delegates to either the first-person or isometric update path.
+        /// </summary>
         public void Update(GameTime gameTime, in InputState input, Vector3 playerWorldPos, float playerFacing)
         {
             if (input.ToggleCamera)
@@ -229,6 +246,15 @@ namespace StoreChase
         // gameplay question is "am I pointed roughly at that cat", not "is it
         // inside a pixel-perfect frustum", and a narrow cone would make the
         // interaction fiddly.
+        /// <summary>
+        /// Is a world point inside what the camera is currently pointed at?
+        ///
+        /// This is the difference between the two camera modes as far as the
+        /// game is concerned. Overhead, the whole store is in frame and the
+        /// answer is effectively "yes" for anything in the room, so a cat being
+        /// watched never notices. In first person it's a real cone, which is what
+        /// lets a Nervous cat be pinned just by looking at it.
+        /// </summary>
         public bool IsInViewCone(Vector3 eye, Vector3 target)
         {
             Vector3 to = target - eye;

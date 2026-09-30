@@ -7,8 +7,13 @@ namespace StoreChase;
 // a little bob offset so a heap of items is readable at a glance.
 public enum LootKind
 {
+    /// <summary>A canned good — red box.</summary>
     Canned,
+
+    /// <summary>A boxed good — brown box.</summary>
     Boxed,
+
+    /// <summary>A bagged good — green box.</summary>
     Bagged,
 }
 
@@ -33,7 +38,10 @@ public enum LootState
 // knowing any rules.
 public sealed class LootItem
 {
+    /// <summary>Which shelf the loot came from (cosmetic — picks the box colour).</summary>
     public LootKind Kind { get; }
+
+    /// <summary>Current possession state.</summary>
     public LootState State { get; set; } = LootState.Loose;
 
     /// <summary>Where it sits when loose, and where it was dropped.</summary>
@@ -49,6 +57,7 @@ public sealed class LootItem
     /// "dropped just now" hint.</summary>
     public float AgeSeconds { get; set; }
 
+    /// <summary>Creates a new loot item of the given kind at the given cell.</summary>
     public LootItem(LootKind kind, GridPos cell, Vector3 worldPos)
     {
         Kind = kind;
@@ -56,11 +65,15 @@ public sealed class LootItem
         WorldPos = worldPos;
     }
 
+    /// <summary>True when the item is on the floor/shelf, waiting to be taken.</summary>
     public bool IsLoose => State == LootState.Loose;
+
+    /// <summary>True when the item is behind the counter (safe).</summary>
     public bool IsSecured => State == LootState.Secured;
 
     // Per-kind palette. These read against the store's grey floor and brown
     // shelves without needing textures.
+    /// <summary>The item's display colour, based on its kind.</summary>
     public Color Tint => Kind switch
     {
         LootKind.Canned => new Color(196, 78, 72),

@@ -4,9 +4,14 @@ namespace StoreChase;
 
 // Which kind of device a source represents. Lets gameplay/UI know what the
 // player is using right now (e.g. to show the matching control hints).
+/// <summary>Which kind of device a source represents. Lets gameplay/UI know what the
+/// player is using right now (e.g. to show the matching control hints).</summary>
 public enum InputDeviceKind
 {
+    /// <summary>Keyboard and mouse.</summary>
     KeyboardMouse,
+
+    /// <summary>Gamepad / controller.</summary>
     GamePad,
 }
 
@@ -15,8 +20,10 @@ public enum InputDeviceKind
 // picks the active source and exposes its state.
 public interface IInputSource
 {
+    /// <summary>Which kind of device this source represents.</summary>
     InputDeviceKind Kind { get; }
 
+    /// <summary>Polls the device and returns this frame's input state.</summary>
     InputState Poll(GameTime gameTime);
 }
 
@@ -27,6 +34,9 @@ public interface IInputSource
 // request to any source that does.
 public interface IMouseLookSource
 {
+    /// <summary>Whether the pointer should be captured for relative look input.</summary>
     bool MouseLookEnabled { get; set; }
+
+    /// <summary>The screen center to re-center the pointer to while captured.</summary>
     Point MouseLookCenter { get; set; }
 }

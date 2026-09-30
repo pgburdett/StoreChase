@@ -42,9 +42,13 @@ public class SmartAnimalAI : ICritterAI
     private int[,]? _distFromPlayer;
     private int[,]? _distFromSelf;
 
+    /// <summary>True when the AI wants to steal what's underfoot (set by <see cref="DecideNextMove"/>).</summary>
     public bool WantsToSteal { get; private set; }
+
+    /// <summary>The current pose target for the animation rig.</summary>
     public CatPose Pose { get; private set; }
 
+    /// <summary>Creates a new SmartAnimalAI with the given profile and RNG.</summary>
     public SmartAnimalAI(CritterProfile profile, Random rng)
     {
         _profile = profile;
@@ -52,8 +56,13 @@ public class SmartAnimalAI : ICritterAI
         Pose = profile.IdlePose;
     }
 
+    /// <summary>The profile this AI uses for all its decisions.</summary>
     public CritterProfile Profile => _profile;
 
+    /// <summary>
+    /// Analyzes the context and decides the next destination. See the class
+    /// comment for the priority order.
+    /// </summary>
     public GridPos? DecideNextMove(CritterContext context)
     {
         WantsToSteal = false;
@@ -252,6 +261,7 @@ public class SmartAnimalAI : ICritterAI
         return null;
     }
 
+    /// <summary>Returns the nearest counter cell to the given position, or null if none is walkable.</summary>
     public static GridPos? NearestCounterCell(GridPos from, GridMap map)
     {
         GridPos? best = null;

@@ -15,6 +15,12 @@ namespace StoreChase
     // limb around its joint (see Game1.DrawPlayer) — all purely procedural.
     public static class PersonMesh
     {
+        /// <summary>
+        /// Builds the procedural humanoid (head, torso, arms, legs) as an array
+        /// of <see cref="PersonPart"/>s. Part geometry is baked once; per-frame
+        /// limb swing is applied by rotating each limb around its joint
+        /// (see Game1.DrawPlayer).
+        /// </summary>
         public static PersonPart[] Build()
         {
             Color skin = new(236, 196, 156);

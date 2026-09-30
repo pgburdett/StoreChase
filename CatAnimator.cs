@@ -7,26 +7,62 @@ namespace StoreChase;
 // of rig parameters (see CatRigPose) and blends between them, so new
 // behaviour is a new enum value plus a block in CatAnimator.PoseTargets
 // rather than new vertex math.
+/// <summary>
+/// What the cat is doing right now. The animator turns a pose into a full set
+/// of rig parameters (see CatRigPose) and blends between them, so new
+/// behaviour is a new enum value plus a block in CatAnimator.PoseTargets
+/// rather than new vertex math.
+/// </summary>
 public enum CatPose
 {
+    /// <summary>Standing still, weight even.</summary>
     Stand,
+
+    /// <summary>Walking (gait is driven by IsMoving, not the pose).</summary>
     Walk,
+
+    /// <summary>Sitting: rear down, front up, tail curled round.</summary>
     Sit,
+
+    /// <summary>Grooming: head down toward the front paw.</summary>
     Groom,
+
+    /// <summary>Stretching: front legs forward, rear up, tail straight up.</summary>
     Stretch,
+
+    /// <summary>Loafing: curled up asleep, body down, legs tucked.</summary>
     Loaf,
+
+    /// <summary>Startled: up on the legs, tail bristled.</summary>
     Startle,
 }
 // One frame of "what should the cat be doing", assembled by Game1. LookYaw is
 // relative to the cat's own facing (0 = straight ahead, + = to its right) and
 // LookPitch is + for up; the animator smooths toward both, so callers can pass
 // raw targets without any easing of their own.
+/// <summary>
+/// One frame of "what should the cat be doing", assembled by Game1. LookYaw is
+/// relative to the cat's own facing (0 = straight ahead, + = to its right) and
+/// LookPitch is + for up; the animator smooths toward both, so callers can pass
+/// raw targets without any easing of their own.
+/// </summary>
 public readonly record struct CatAnimInput(
+    /// <summary>The desired pose.</summary>
     CatPose Pose,
+
+    /// <summary>Whether the cat is currently moving (drives the gait).</summary>
     bool IsMoving,
+
+    /// <summary>Whether the head should track a target.</summary>
     bool HasLookTarget,
+
+    /// <summary>Head yaw relative to the cat's facing (radians).</summary>
     float LookYaw,
+
+    /// <summary>Head pitch (radians, + for up).</summary>
     float LookPitch,
+
+    /// <summary>Delta time since the last frame (seconds).</summary>
     float Dt);
 // Procedurally animates the cat. The OBJ is a single rigid pose with no
 // skeleton, so there are no bones to drive; instead this derives a small
@@ -196,6 +232,11 @@ public sealed class CatAnimator
     private float _idleTimer;
     private float _tailPhase;
 
+    /// <summary>
+    /// Creates a new animator for the given mesh. The constructor analyses the
+    /// mesh's geometry to derive the rig (leg pivots, head/tail bands, etc.) —
+    /// this is done once and cached.
+    /// </summary>
     public CatAnimator(StaticMesh mesh)
     {
         _mesh = mesh;
@@ -230,6 +271,10 @@ public sealed class CatAnimator
         _legLength = MathF.Max(0.0001f, _legs[0].Hip.Z); // hip height = leg length
     }
 
+    /// <summary>
+    /// Advances the animation one frame: eases toward the pose targets, updates
+    /// the gait phase, and applies the rig to the mesh's vertices.
+    /// </summary>
     public void Update(in CatAnimInput input)
     {
         float dt = MathF.Max(0f, input.Dt);

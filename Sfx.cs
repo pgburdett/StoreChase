@@ -5,19 +5,43 @@ using Microsoft.Xna.Framework.Audio;
 
 namespace StoreChase;
 
+/// <summary>Identifiers for every synthesised sound cue in the game.</summary>
 public enum SfxId
 {
+    /// <summary>A critter picks up loot.</summary>
     Steal,
+
+    /// <summary>A critter drops loot (after a tackle).</summary>
     Drop,
+
+    /// <summary>The player picks up loot.</summary>
     PickUp,
+
+    /// <summary>An item is secured behind the counter.</summary>
     Secure,
+
+    /// <summary>The player tackles a critter.</summary>
     Tackle,
+
+    /// <summary>The ball is thrown.</summary>
     Throw,
+
+    /// <summary>The ball bounces off a shelf.</summary>
     Bounce,
+
+    /// <summary>A cat notices the player.</summary>
     Meow,
+
+    /// <summary>The round is won.</summary>
     Win,
+
+    /// <summary>The round is lost.</summary>
     Lose,
+
+    /// <summary>The alarm meter is rising.</summary>
     AlarmBlip,
+
+    /// <summary>A cat is nearby (proximity cue).</summary>
     Heartbeat,
 }
 
@@ -42,8 +66,13 @@ public static class Sfx
     private static bool _available;
     private static bool _initialised;
 
+    /// <summary>True if the audio system is available (i.e. an audio device was found).</summary>
     public static bool Available => _available;
 
+    /// <summary>
+    /// Synthesises all sound cues into PCM buffers at startup. Safe to fail:
+    /// if there's no audio device, the whole system turns into no-ops.
+    /// </summary>
     public static void Initialise()
     {
         if (_initialised) return;
@@ -74,6 +103,7 @@ public static class Sfx
         }
     }
 
+    /// <summary>Plays a sound cue. No-op if the audio system is unavailable.</summary>
     public static void Play(SfxId id, float volume = 1f, float pitch = 0f, float pan = 0f)
     {
         if (!_available) return;
@@ -94,7 +124,10 @@ public static class Sfx
         }
     }
 
-    /// <summary>Plays a cue quieter the further away the source is.</summary>
+    /// <summary>
+    /// Plays a cue quieter the further away the source is, with stereo panning
+    /// based on the source's X offset from the listener.
+    /// </summary>
     public static void PlayAt(SfxId id, Vector3 listener, Vector3 source, float maxDistance, float volume = 1f)
     {
         float d = Vector3.Distance(listener, source);
@@ -103,6 +136,7 @@ public static class Sfx
         Play(id, volume * falloff * falloff, pan: MathHelper.Clamp((source.X - listener.X) / 12f, -1f, 1f));
     }
 
+    /// <summary>Disposes all sound buffers and marks the system as unavailable.</summary>
     public static void Dispose()
     {
         foreach (var s in _sounds.Values) s.Dispose();

@@ -20,15 +20,24 @@ public class InputSystem
     private readonly List<InputState> _polled = new();
     private int _activeIndex;
 
+    /// <summary>The current frame's input from the active device.</summary>
     public InputState State { get; private set; }
+
+    /// <summary>The currently active input source (the one whose state is exposed).</summary>
     public IInputSource ActiveSource => _sources[_activeIndex];
+
+    /// <summary>Which kind of device is currently active.</summary>
     public InputDeviceKind ActiveDevice => ActiveSource.Kind;
 
-    // Requested pointer capture for first-person look. Game1 sets these from
-    // the camera mode; Update forwards them to any source that supports it.
+    /// <summary>Requested pointer capture for first-person look. Game1 sets these from
+    /// the camera mode; Update forwards them to any source that supports it.</summary>
     public bool MouseLookEnabled { get; set; }
+
+    /// <summary>The screen center to re-center the pointer to while captured.</summary>
     public Point MouseLookCenter { get; set; }
 
+    /// <summary>Creates a new InputSystem with the given sources.</summary>
+    /// <exception cref="ArgumentException">If no sources are provided.</exception>
     public InputSystem(params IInputSource[] sources)
     {
         if (sources.Length == 0)
@@ -37,12 +46,22 @@ public class InputSystem
         _sources = new List<IInputSource>(sources);
     }
 
+    /// <summary>Adds an additional input source and returns this (for chaining).</summary>
     public InputSystem Add(IInputSource source)
     {
         _sources.Add(source);
         return this;
     }
 
+    /// <summary>
+    /// Polls all registered sources, forwards the mouse-look request to any
+    /// source that supports it, and selects the active device.
+    ///
+    /// The current device keeps control while it has input; when it goes idle,
+    /// the first other device with input takes over. Every source is still
+    /// polled each frame so its internal delta state (e.g. the cumulative mouse
+    /// wheel) stays current while inactive.
+    /// </summary>
     public void Update(GameTime gameTime)
     {
         foreach (var source in _sources)

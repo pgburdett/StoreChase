@@ -15,6 +15,10 @@ namespace StoreChase
     // (see Game1.LoadContent).
     public static class CubeMesh
     {
+        /// <summary>
+        /// Builds a unit cube (1x1x1, centered on origin in X/Z, sitting on Y=0).
+        /// Scale it via the world matrix.
+        /// </summary>
         public static VertexPositionNormalColorTexture[] Build(Color color, float uRepeat = 1f, float vRepeat = 1f)
         {
             // 6 faces * 2 triangles * 3 vertices = 36 verts, not indexed
@@ -87,9 +91,11 @@ namespace StoreChase
             return v;
         }
 
-        // A flat quad on the XZ plane, for the floor. Sits at Y=0. The repeats
-        // are how many texture tiles span the whole quad, so a caller that wants
-        // one tile every N world units divides the extent by N.
+        /// <summary>
+        /// A flat quad on the XZ plane, for the floor. Sits at Y=0. The repeats
+        /// are how many texture tiles span the whole quad, so a caller that wants
+        /// one tile every N world units divides the extent by N.
+        /// </summary>
         public static VertexPositionNormalColorTexture[] BuildFloorQuad(
             Color color, float width, float depth, float uRepeat, float vRepeat)
         {
@@ -124,11 +130,24 @@ namespace StoreChase
     // used to live here; it was removed rather than kept around, because mixing
     // the two under one effect means sampling a texture with an uninitialised
     // TEXCOORD.
+    /// <summary>
+    /// The one vertex type the shared BasicEffect draws. Every mesh that goes
+    /// through DrawMesh has to use it so they all agree on one vertex
+    /// declaration — including the ones that sample a flat white texture and
+    /// rely on vertex color alone (the player).
+    /// </summary>
     public struct VertexPositionNormalColorTexture : IVertexType
     {
+        /// <summary>Vertex position in model space.</summary>
         public Vector3 Position;
+
+        /// <summary>Vertex normal (for BasicEffect lighting).</summary>
         public Vector3 Normal;
+
+        /// <summary>Vertex color (multiplied with the texture).</summary>
         public Color Color;
+
+        /// <summary>Texture coordinate.</summary>
         public Vector2 TexCoord;
 
         public static readonly VertexDeclaration VertexDeclaration = new VertexDeclaration(

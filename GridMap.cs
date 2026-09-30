@@ -4,13 +4,24 @@ using System.Collections.Generic;
 namespace StoreChase
 {
     // 0 = open floor, 1 = shelf/wall (blocked)
+    /// <summary>
+    /// The store's grid: walkability, line-of-sight, BFS pathing, and the
+    /// counter row. Pure data and logic — no graphics, no game state.
+    /// </summary>
     public class GridMap
     {
+        /// <summary>Map width in cells.</summary>
         public int Width { get; }
+
+        /// <summary>Map height in cells.</summary>
         public int Height { get; }
+
+        /// <summary>World units per cell (informational — systems use their own copy).</summary>
         public int CellSize { get; }
+
         private readonly int[,] _cells;
 
+        /// <summary>Creates the store map from the hardcoded layout.</summary>
         public GridMap(int cellSize = 32)
         {
             CellSize = cellSize;
@@ -42,6 +53,7 @@ namespace StoreChase
                     _cells[x, y] = layout[y][x] == '1' ? 1 : 0;
         }
 
+        /// <summary>True if the cell is open floor (not a shelf/wall and in bounds).</summary>
         public bool IsWalkable(int x, int y)
         {
             if (x < 0 || y < 0 || x >= Width || y >= Height) return false;
@@ -54,6 +66,7 @@ namespace StoreChase
         // player has to reach to secure stolen goods. It is a normal walkable
         // row in the layout, so this is data rather than geometry — the same
         // cells get the counter texture drawn on them.
+        /// <summary>True if the cell is part of the front counter (the player's goal).</summary>
         public bool IsCounter(int x, int y) => y == CounterRow && x >= CounterStart && x <= CounterEnd;
 
         public const int CounterRow = 1;
@@ -74,6 +87,11 @@ namespace StoreChase
         // measures walking distance, which is right for pathing but wrong for
         // sight, because a cat can see you straight down an aisle it can't
         // reach you along.
+        /// <summary>
+        /// Straight-line visibility between two cells, ignoring whether the
+        /// endpoints are walkable. Uses a Bresenham walk, so it reports the
+        /// shelves that actually interrupt a sightline.
+        /// </summary>
         public bool HasLineOfSight(GridPos from, GridPos to)
         {
             if (from == to) return true;
@@ -103,6 +121,7 @@ namespace StoreChase
 
         // Every walkable cell, for spawners that need to scatter something
         // around the store without hardcoding positions.
+        /// <summary>Every walkable cell, for spawners that need to scatter things.</summary>
         public IEnumerable<GridPos> WalkableCells()
         {
             for (int y = 0; y < Height; y++)
@@ -113,6 +132,10 @@ namespace StoreChase
         // Walkable cells that touch a shelf, i.e. somewhere a shopper would
         // actually leave something. Used to spawn loot so it reads as "on the
         // shelves" rather than "in the middle of the floor".
+        /// <summary>
+        /// Walkable cells that touch a shelf — somewhere a shopper would
+        /// actually leave something. Used to spawn loot.
+        /// </summary>
         public IEnumerable<GridPos> ShelfEdgeCells()
         {
             GridPos[] offsets = { new(0, -1), new(0, 1), new(-1, 0), new(1, 0) };
@@ -127,6 +150,10 @@ namespace StoreChase
 
         // Breadth-first search: returns the next step from `start` toward `goal`.
         // Good enough for a store-sized grid — no need for A* here.
+        /// <summary>
+        /// Breadth-first search: returns the next step from <paramref name="start"/>
+        /// toward <paramref name="goal"/>. Good enough for a store-sized grid.
+        /// </summary>
         public GridPos? NextStepToward(GridPos start, GridPos goal)
         {
             if (start == goal) return null;
@@ -172,6 +199,11 @@ namespace StoreChase
         // actually on the other side of a shelf). Unreachable tiles get
         // int.MaxValue. Used by the critter AI to judge how good an escape
         // tile actually is once shelves are in the way.
+        /// <summary>
+        /// Full BFS distance map from <paramref name="origin"/>, following walls.
+        /// Unreachable tiles get <see cref="int.MaxValue"/>. Used by the critter
+        /// AI to judge how good an escape tile actually is.
+        /// </summary>
         public int[,] DistanceMapFrom(GridPos origin)
         {
             var dist = new int[Width, Height];
@@ -207,9 +239,13 @@ namespace StoreChase
         }
     }
 
+    /// <summary>A grid cell coordinate. Value type, so comparisons are by value.</summary>
     public readonly struct GridPos
     {
+        /// <summary>Column (0 = left edge of the map).</summary>
         public readonly int X, Y;
+
+        /// <summary>Creates a grid position.</summary>
         public GridPos(int x, int y) { X = x; Y = y; }
 
         public static bool operator ==(GridPos a, GridPos b) => a.X == b.X && a.Y == b.Y;
