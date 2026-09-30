@@ -20,6 +20,10 @@ namespace StoreChase
         public Matrix View { get; private set; } = Matrix.Identity;
         public Matrix Projection { get; private set; } = Matrix.Identity;
 
+        /// <summary>View * Projection, for projecting world points to screen
+        /// space (the HUD's off-screen thief marker).</summary>
+        public Matrix ViewProjection => View * Projection;
+
         public CameraViewMode Mode { get; private set; } = CameraViewMode.Isometric;
 
         // Pan is an offset (in world units) applied to where the camera
@@ -211,6 +215,76 @@ namespace StoreChase
                 MathHelper.ToRadians(FirstPersonFovDegrees),
                 _graphicsDevice.Viewport.AspectRatio,
                 FirstPersonNearPlane, 300f);
+        }
+
+        // Is a world point inside what the camera is currently pointed at?
+        //
+        // This is the difference between the two camera modes as far as the
+        // game is concerned. Overhead, the whole store is in frame and the
+        // answer is effectively "yes" for anything in the room, so a cat being
+        // watched never notices. In first person it's a real cone, which is what
+        // lets a Nervous cat be pinned just by looking at it.
+        //
+        // The cone is a generous half-angle rather than the exact frustum: the
+        // gameplay question is "am I pointed roughly at that cat", not "is it
+        // inside a pixel-perfect frustum", and a narrow cone would make the
+        // interaction fiddly.
+        public bool IsInViewCone(Vector3 eye, Vector3 target)
+        {
+            Vector3 to = target - eye;
+
+            // Anything right on top of the camera counts as watched.
+            float sqrLen = to.LengthSquared();
+            if (sqrLen < 0.0001f) return true;
+            to /= MathF.Sqrt(sqrLen);
+
+            float halfAngle = Mode == CameraViewMode.FirstPerson
+                ? MathHelper.ToRadians(FirstPersonFovDegrees * 0.6f)
+                : MathHelper.ToRadians(90f);
+
+            Vector3 forward = FacingDirection;
+            return Vector3.Dot(forward, to) >= MathF.Cos(halfAngle);
+        }
+
+        /// <summary>
+        /// The direction the camera is looking, flattened onto the XZ plane and
+        /// normalized. This is the aim direction for anything thrown by hand:
+        /// pitching up or down shouldn't change where a ball lands, only where
+        /// you were looking a moment ago.
+        /// </summary>
+        public Vector2 FacingOnPlane
+        {
+            get
+            {
+                Vector3 f = FacingDirection;
+                var flat = new Vector2(f.X, f.Z);
+                // Looking straight up or down leaves nothing to throw along;
+                // fall back to the last good heading rather than throwing at a
+                // zero vector.
+                return flat.LengthSquared() > 0.0001f ? Vector2.Normalize(flat) : new Vector2(0f, 1f);
+            }
+        }
+
+        // The direction the camera is looking, in world space. In first person
+        // that's the yaw/pitch heading; overhead it's straight down, nudged off
+        // vertical the same way the view matrix is.
+        public Vector3 FacingDirection
+        {
+            get
+            {
+                if (Mode == CameraViewMode.FirstPerson)
+                {
+                    float cosPitch = (float)Math.Cos(_fpPitch);
+                    return new Vector3(
+                        (float)Math.Sin(_fpYaw) * cosPitch,
+                        (float)Math.Sin(_fpPitch),
+                        (float)Math.Cos(_fpYaw) * cosPitch);
+                }
+
+                // Straight down, nudged so it's never exactly parallel to Up
+                // (mirrors the upNudge in UpdateCameraMatrices).
+                return Vector3.Normalize(new Vector3(0f, -1f, 0.0001f));
+            }
         }
 
         // Turns the movement axes into a world-space XZ heading for free

@@ -14,8 +14,9 @@ public sealed class GameStartedEvent : BaseEvent
 {
 }
 
-// Published when the player catches the critter. Carries the final time so
-// subscribers (e.g. RunStats) don't have to reach back into Game1 for it.
+// Published when the player wins the round — every item back behind the
+// counter before the alarm filled. Carries the final time so subscribers
+// (e.g. RunStats) don't have to reach back into Game1 for it.
 public sealed class GameWonEvent : BaseEvent
 {
     public float ElapsedTime { get; }
@@ -24,6 +25,37 @@ public sealed class GameWonEvent : BaseEvent
     {
         ElapsedTime = elapsedTime;
     }
+}
+
+// Published when the alarm fills. Carries how much got secured, so a failed
+// round can report "you got 4 of 6 back" rather than just a loss.
+public sealed class GameLostEvent : BaseEvent
+{
+    public float ElapsedTime { get; }
+    public int SecuredCount { get; }
+
+    public GameLostEvent(float elapsedTime, int securedCount)
+    {
+        ElapsedTime = elapsedTime;
+        SecuredCount = securedCount;
+    }
+}
+
+// Published when a critter picks up an item. Carries the species so subscribers
+// can tell whether one profile is doing all the thieving.
+public sealed class ItemStolenEvent : BaseEvent
+{
+    public string? Species { get; }
+
+    public ItemStolenEvent(string? species)
+    {
+        Species = species;
+    }
+}
+
+// Published when an item makes it behind the counter.
+public sealed class ItemSecuredEvent : BaseEvent
+{
 }
 
 public class EventSystem

@@ -94,6 +94,13 @@ namespace StoreChase
 
         public Vector3 Size => BoundsMax - BoundsMin;
         public Vector3 Center => (BoundsMax + BoundsMin) / 2f;
+
+        // Returns the same geometry with textures attached, sharing the vertex
+        // and index arrays. Lets the parser build a mesh without a
+        // GraphicsDevice (see ObjLoader.ParseGeometry) and the texture upload
+        // happen separately.
+        public StaticMesh WithTextures(Texture2D? diffuse, Texture2D? normal)
+            => new StaticMesh(Vertices, Indices, diffuse, normal);
     }
 
     public static class ObjLoader
@@ -107,6 +114,46 @@ namespace StoreChase
         // texture paths are resolved relative to each other as written in the
         // files.
         public static StaticMesh Load(GraphicsDevice graphicsDevice, string objPath)
+        {
+            (StaticMesh mesh, string? diffuseFile, string? bumpFile) = ParseCore(objPath);
+            string dir = Path.GetDirectoryName(objPath) ?? ".";
+
+            Texture2D? texture = null;
+            if (diffuseFile != null)
+            {
+                string texPath = Path.Combine(dir, diffuseFile);
+                if (File.Exists(texPath))
+                {
+                    using var stream = File.OpenRead(texPath);
+                    texture = Texture2D.FromStream(graphicsDevice, stream);
+                    texture = TryGenerateMipmaps(graphicsDevice, texture);
+                }
+            }
+
+            Texture2D? normalMap = null;
+            if (bumpFile != null)
+            {
+                string bumpPath = Path.Combine(dir, bumpFile);
+                if (File.Exists(bumpPath))
+                {
+                    using var stream = File.OpenRead(bumpPath);
+                    var heightMap = Texture2D.FromStream(graphicsDevice, stream);
+                    normalMap = HeightMapToNormalTexture(heightMap, graphicsDevice, NormalMapStrength);
+                }
+            }
+
+            return mesh.WithTextures(texture, normalMap);
+        }
+
+        // Parses the OBJ into geometry only, with no textures and no
+        // GraphicsDevice involved. The animation rig (CatAnimator) only ever
+        // needs vertices, so this is enough to drive it from a tool or a test
+        // outside a graphics context. Use Load for anything that renders.
+        public static StaticMesh ParseGeometry(string objPath) => ParseCore(objPath).Mesh;
+
+        private readonly record struct ParsedObj(StaticMesh Mesh, string? DiffuseFile, string? BumpFile);
+
+        private static ParsedObj ParseCore(string objPath)
         {
             string dir = Path.GetDirectoryName(objPath) ?? ".";
 
@@ -195,30 +242,6 @@ namespace StoreChase
                 }
             }
 
-            Texture2D? texture = null;
-            if (diffuseTextureFile != null)
-            {
-                string texPath = Path.Combine(dir, diffuseTextureFile);
-                if (File.Exists(texPath))
-                {
-                    using var stream = File.OpenRead(texPath);
-                    texture = Texture2D.FromStream(graphicsDevice, stream);
-                    texture = TryGenerateMipmaps(graphicsDevice, texture);
-                }
-            }
-
-            Texture2D? normalMap = null;
-            if (bumpTextureFile != null)
-            {
-                string bumpPath = Path.Combine(dir, bumpTextureFile);
-                if (File.Exists(bumpPath))
-                {
-                    using var stream = File.OpenRead(bumpPath);
-                    var heightMap = Texture2D.FromStream(graphicsDevice, stream);
-                    normalMap = HeightMapToNormalTexture(heightMap, graphicsDevice, NormalMapStrength);
-                }
-            }
-
             if (vertexList.Count > int.MaxValue)
                 throw new InvalidOperationException(
                     $"Mesh has {vertexList.Count} unique vertices, which exceeds int index range. " +
@@ -229,7 +252,10 @@ namespace StoreChase
             var indices = indexList.ToArray();
             ComputeTangents(vertices, indices);
 
-            return new StaticMesh(vertices, indices, texture, normalMap);
+            return new ParsedObj(
+                new StaticMesh(vertices, indices, null, null),
+                diffuseTextureFile,
+                bumpTextureFile);
         }
 
         // Parses one face-vertex token like "12/5/3", "12//3", or "12" into

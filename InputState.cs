@@ -22,6 +22,10 @@ public readonly struct InputState
     public bool Restart { get; init; }
     public bool Exit { get; init; }
 
+    /// <summary>Throw the ball. A rising edge, so holding the button doesn't
+    /// fire one every frame.</summary>
+    public bool Throw { get; init; }
+
     public static InputState Neutral => default;
 
     // True when this device did anything this frame. Used by InputSystem to
@@ -34,5 +38,6 @@ public readonly struct InputState
         Look != Vector2.Zero ||
         ToggleCamera ||
         Restart ||
-        Exit;
+        Exit ||
+        Throw;
 }

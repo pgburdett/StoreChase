@@ -8,10 +8,9 @@ namespace StoreChase
     // hanging toward -Y; Pivot is where that joint sits in the body's space, and
     // SwingSign controls which limb swings forward when the walk phase is +.
     // Static parts (torso/head) have SwingSign 0 and Pivot zero.
-    public readonly record struct PersonPart(VertexPositionNormalColor[] Vertices, Vector3 Pivot, float SwingSign);
-
+    public readonly record struct PersonPart(VertexPositionNormalColorTexture[] Vertices, Vector3 Pivot, float SwingSign);
     // Builds a procedural humanoid (head, torso, arms, legs) out of
-    // VertexPositionNormalColor cuboids, replacing the old player cube. Part
+    // VertexPositionNormalColorTexture cuboids, replacing the old player cube. Part
     // geometry is baked once; per-frame limb swing is applied by rotating each
     // limb around its joint (see Game1.DrawPlayer) — all purely procedural.
     public static class PersonMesh
@@ -49,26 +48,26 @@ namespace StoreChase
 
         // A leg in hip-relative space: hip at origin, leg from 0 to -1 in Y,
         // with a shoe box at the bottom (forward offset in +Z).
-        private static VertexPositionNormalColor[] BuildLeg()
+        private static VertexPositionNormalColorTexture[] BuildLeg()
         {
             Color pants = new(58, 62, 74);
             Color shoes = new(38, 38, 42);
 
-            var v = new List<VertexPositionNormalColor>();
+            var v = new List<VertexPositionNormalColorTexture>();
             AddBox(v, new Vector3(0f, -0.5f, 0f), new Vector3(0.18f, 1f, 0.18f), pants);
             AddBox(v, new Vector3(0f, -0.95f, 0.07f), new Vector3(0.2f, 0.12f, 0.3f), shoes);
             return v.ToArray();
         }
 
         // Builds a single cuboid as a standalone mesh (baked at the given center).
-        private static VertexPositionNormalColor[] BuildBox(Vector3 center, Vector3 size, Color color)
+        private static VertexPositionNormalColorTexture[] BuildBox(Vector3 center, Vector3 size, Color color)
         {
-            var v = new List<VertexPositionNormalColor>();
+            var v = new List<VertexPositionNormalColorTexture>();
             AddBox(v, center, size, color);
             return v.ToArray();
         }
 
-        private static void AddBox(List<VertexPositionNormalColor> v, Vector3 center, Vector3 size, Color color)
+        private static void AddBox(List<VertexPositionNormalColorTexture> v, Vector3 center, Vector3 size, Color color)
         {
             float hx = size.X * 0.5f;
             float hy = size.Y * 0.5f;
@@ -83,14 +82,21 @@ namespace StoreChase
             var p111 = new Vector3(center.X + hx, center.Y + hy, center.Z + hz);
             var p011 = new Vector3(center.X - hx, center.Y + hy, center.Z + hz);
 
+            // The player is drawn with a BasicEffect, so its vertices carry UVs
+            // like every other mesh that shares that effect — but the person
+            // never samples the store's surface textures. Every face points at
+            // the middle of the flat white 1x1 (see StoreTextures.Flat), so the
+            // player is shaded entirely by its vertex color as before.
+            var white = new Vector2(0.5f, 0.5f);
+
             void Face(Vector3 normal, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
             {
-                v.Add(new VertexPositionNormalColor(a, normal, color));
-                v.Add(new VertexPositionNormalColor(b, normal, color));
-                v.Add(new VertexPositionNormalColor(c, normal, color));
-                v.Add(new VertexPositionNormalColor(a, normal, color));
-                v.Add(new VertexPositionNormalColor(c, normal, color));
-                v.Add(new VertexPositionNormalColor(d, normal, color));
+                v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                v.Add(new VertexPositionNormalColorTexture(b, normal, color, white));
+                v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                v.Add(new VertexPositionNormalColorTexture(d, normal, color, white));
             }
 
             Face(Vector3.Backward, p000, p010, p110, p100); // front (-Z)

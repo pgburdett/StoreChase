@@ -1,0 +1,149 @@
+using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+
+namespace StoreChase;
+
+public enum CritterKind
+{
+    /// <summary>The one that actually plans a heist.</summary>
+    ShopCat,
+
+    /// <summary>Fast, panicky, no escape plan. Easy to corner.</summary>
+    Kitten,
+
+    /// <summary>Slow, unbothered, sleeps through the alarm unless it's the
+    /// one holding something.</summary>
+    LoungeLizard,
+
+    /// <summary>Freezes when you look straight at it, bolts the moment you
+    /// look away. Turn on the first-person camera to corner one.</summary>
+    Nervous,
+}
+
+// Everything that makes one cat behave differently from another, in one
+// immutable record. SmartAnimalAI reads these instead of hardcoding numbers, so
+// adding a species is a new entry here rather than a new branch in the AI.
+public sealed record CritterProfile
+{
+    public required CritterKind Kind { get; init; }
+    public required string Name { get; init; }
+
+    // Movement and senses.
+    public required float MoveSpeed { get; init; }
+    public required int AlertRadius { get; init; }
+    public required int FleeRadius { get; init; }
+    public required int VisionRadius { get; init; }
+
+    // Planning.
+    public required float ReplanInterval { get; init; }
+    public required float QuirkChance { get; init; }
+
+    /// <summary>0 = ignores the merchandise, 1 = makes a beeline for it.</summary>
+    public required float ThiefDrive { get; init; }
+
+    /// <summary>Freezes while the player is looking at it.</summary>
+    public required bool FreezesWhenWatched { get; init; }
+
+    /// <summary>Ignores a thrown ball.</summary>
+    public required bool IgnoresBall { get; init; }
+
+    // Presentation. The rig has one model, so the cats are told apart by size,
+    // a tint and what they do when idle.
+    public required float Scale { get; init; }
+
+    /// <summary>Species colour. Also drives the shader tint (as a normalized
+    /// Vector3) and the HUD swatch, so the three never disagree.</summary>
+    public required Color Tint { get; init; }
+
+    public required CatPose IdlePose { get; init; }
+
+    /// <summary>Tint as the CatNormalMap shader wants it (0..1, three channels).</summary>
+    public Vector3 TintVector => new(Tint.R / 255f, Tint.G / 255f, Tint.B / 255f);
+
+    public static CritterProfile For(CritterKind kind) => kind switch
+    {
+        CritterKind.ShopCat => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Shop Cat",
+            MoveSpeed = 4.2f,
+            AlertRadius = 8,
+            FleeRadius = 5,
+            VisionRadius = 9,
+            ReplanInterval = 0.6f,
+            QuirkChance = 0.15f,
+            ThiefDrive = 0.95f,
+            FreezesWhenWatched = false,
+            IgnoresBall = false,
+            Scale = 1f,
+            Tint = new Color(255, 255, 255), // the diffuse texture unmodified
+            IdlePose = CatPose.Stand,
+        },
+
+        CritterKind.Kitten => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Kitten",
+            MoveSpeed = 5.6f,
+            AlertRadius = 10,
+            FleeRadius = 7,
+            VisionRadius = 11,
+            // No patience: it re-decides constantly and jukes far more often.
+            ReplanInterval = 0.25f,
+            QuirkChance = 0.45f,
+            ThiefDrive = 0.7f,
+            FreezesWhenWatched = false,
+            IgnoresBall = false,
+            Scale = 0.7f,
+            Tint = new Color(255, 236, 214),
+            IdlePose = CatPose.Stand,
+        },
+
+        CritterKind.LoungeLizard => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Lounge Lizard",
+            MoveSpeed = 2.4f,
+            AlertRadius = 4,
+            FleeRadius = 2,
+            VisionRadius = 5,
+            ReplanInterval = 1.2f,
+            QuirkChance = 0.05f,
+            ThiefDrive = 0.25f,
+            FreezesWhenWatched = false,
+            IgnoresBall = true,
+            Scale = 1.25f,
+            Tint = new Color(214, 200, 186),
+            IdlePose = CatPose.Loaf,
+        },
+
+        _ => new CritterProfile
+        {
+            Kind = CritterKind.Nervous,
+            Name = "Nervous Cat",
+            MoveSpeed = 4.8f,
+            AlertRadius = 7,
+            FleeRadius = 6,
+            VisionRadius = 12,
+            ReplanInterval = 0.4f,
+            QuirkChance = 0.3f,
+            ThiefDrive = 0.8f,
+            FreezesWhenWatched = true,
+            IgnoresBall = false,
+            Scale = 0.9f,
+            Tint = new Color(226, 228, 236),
+            IdlePose = CatPose.Stand,
+        },
+    };
+
+    public static IReadOnlyList<CritterKind> AllKinds { get; } = new[]
+    {
+        CritterKind.ShopCat,
+        CritterKind.Kitten,
+        CritterKind.LoungeLizard,
+        CritterKind.Nervous,
+    };
+
+    public static CritterProfile Random(Random rng) => For(AllKinds[rng.Next(AllKinds.Count)]);
+}

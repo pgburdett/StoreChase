@@ -11,6 +11,7 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
 {
     private int _previousScrollValue;
     private bool _previousToggle;
+    private bool _previousThrow;
     private bool _mouseCaptured;
 
     public InputDeviceKind Kind => InputDeviceKind.KeyboardMouse;
@@ -76,6 +77,14 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
         bool toggle = toggleNow && !_previousToggle;
         _previousToggle = toggleNow;
 
+        // Throw: left mouse button, or F for keyboard-only players. Rising
+        // edge, like the camera toggle, so holding it doesn't spam balls.
+        // (In first person the pointer is captured, which doesn't affect the
+        // button state — only the position — so the click still registers.)
+        bool throwNow = ms.LeftButton == ButtonState.Pressed || kb.IsKeyDown(Keys.F);
+        bool throwPressed = throwNow && !_previousThrow;
+        _previousThrow = throwNow;
+
         return new InputState
         {
             Move = move,
@@ -86,6 +95,7 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             ToggleCamera = toggle,
             Restart = kb.IsKeyDown(Keys.R),
             Exit = kb.IsKeyDown(Keys.Escape),
+            Throw = throwPressed,
         };
     }
 }

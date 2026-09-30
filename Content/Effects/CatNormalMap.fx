@@ -36,6 +36,12 @@ float3 FillLightColor = float3(0.9647059f, 0.9607844f, 0.945098f);
 float3 BackLightDirection = float3(-0.4545195f, 0.3420201f, -0.7198464f);
 float3 BackLightColor = float3(0.8078432f, 0.8039216f, 0.7647059f);
 
+// Per-critter colour wash. The store has one cat model and one photographic
+// diffuse texture, so the differences between species (a pale kitten, a fat
+// ginger one) come from tinting it here rather than from separate textures.
+// Defaults to white, i.e. no change.
+float3 Tint = float3(1.0f, 1.0f, 1.0f);
+
 float SpecularStrength = 0.2f;
 float SpecularShininess = 16.0f;
 float3 ViewDirection = float3(0.0f, 1.0f, 0.0f); // set per frame by Game1
@@ -102,7 +108,7 @@ float4 MainPS(VertexShaderOutput input) : COLOR0
         pow(saturate(dot(normal, halfVec)), SpecularShininess);
 
     float4 diffuse = tex2D(DiffuseTexture, input.TexCoord);
-    return float4(diffuse.rgb * light, diffuse.a);
+    return float4(diffuse.rgb * light * Tint, diffuse.a);
 }
 
 technique

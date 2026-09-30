@@ -13,6 +13,7 @@ namespace StoreChase;
 //   Triggers (RT/LT)     -> camera tilt up/down
 //   Shoulders (RB/LB)    -> zoom in/out (continuous)
 //   Y                    -> toggle first-person / isometric
+//   X                    -> throw the ball
 //   Start                -> restart
 //   Back                 -> exit
 public class GamePadInput : IInputSource
@@ -22,6 +23,7 @@ public class GamePadInput : IInputSource
 
     private readonly PlayerIndex _playerIndex;
     private bool _previousToggle;
+    private bool _previousThrow;
 
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
     {
@@ -59,6 +61,11 @@ public class GamePadInput : IInputSource
         bool toggle = toggleNow && !_previousToggle;
         _previousToggle = toggleNow;
 
+        // X throws the ball; rising edge, same as the keyboard's click.
+        bool throwNow = gp.Buttons.X == ButtonState.Pressed;
+        bool throwPressed = throwNow && !_previousThrow;
+        _previousThrow = throwNow;
+
         return new InputState
         {
             Move = move,
@@ -71,6 +78,7 @@ public class GamePadInput : IInputSource
             ToggleCamera = toggle,
             Restart = gp.Buttons.Start == ButtonState.Pressed,
             Exit = gp.Buttons.Back == ButtonState.Pressed,
+            Throw = throwPressed,
         };
     }
 

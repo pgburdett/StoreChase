@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace StoreChase
@@ -48,6 +49,81 @@ namespace StoreChase
         }
 
         public int this[int x, int y] => _cells[x, y];
+
+        // The front counter: the run of cells along the top aisle that the
+        // player has to reach to secure stolen goods. It is a normal walkable
+        // row in the layout, so this is data rather than geometry — the same
+        // cells get the counter texture drawn on them.
+        public bool IsCounter(int x, int y) => y == CounterRow && x >= CounterStart && x <= CounterEnd;
+
+        public const int CounterRow = 1;
+        public const int CounterStart = 6;
+        public const int CounterEnd = 11;
+
+        // How tall the counter slab is drawn, in world units. Lives here beside
+        // the counter cells themselves so Game1 (which draws it) and ItemField
+        // (which stacks recovered goods on top of it) can't disagree.
+        public const float CounterHeight = 0.35f;
+
+        // Straight-line visibility between two cells, ignoring whether the
+        // endpoints are walkable (the player standing in an aisle can see
+        // across it). Uses a Bresenham walk, so it reports the shelves that
+        // actually interrupt the sightline.
+        //
+        // This is what the "can the cat see me" test needs: DistanceMapFrom
+        // measures walking distance, which is right for pathing but wrong for
+        // sight, because a cat can see you straight down an aisle it can't
+        // reach you along.
+        public bool HasLineOfSight(GridPos from, GridPos to)
+        {
+            if (from == to) return true;
+
+            int x = from.X, y = from.Y;
+            int dx = Math.Abs(to.X - from.X), dy = Math.Abs(to.Y - from.Y);
+            int sx = to.X > from.X ? 1 : -1;
+            int sy = to.Y > from.Y ? 1 : -1;
+            int err = dx - dy;
+
+            // At least one step, so the origin cell is never tested against
+            // itself (a cat standing in an aisle is visible from that aisle).
+            while (x != to.X || y != to.Y)
+            {
+                int e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x += sx; }
+                if (e2 < dx) { err += dx; y += sy; }
+
+                // Reached the target: the whole path was clear.
+                if (x == to.X && y == to.Y) return true;
+
+                if (!IsWalkable(x, y)) return false;
+            }
+
+            return true;
+        }
+
+        // Every walkable cell, for spawners that need to scatter something
+        // around the store without hardcoding positions.
+        public IEnumerable<GridPos> WalkableCells()
+        {
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                    if (IsWalkable(x, y)) yield return new GridPos(x, y);
+        }
+
+        // Walkable cells that touch a shelf, i.e. somewhere a shopper would
+        // actually leave something. Used to spawn loot so it reads as "on the
+        // shelves" rather than "in the middle of the floor".
+        public IEnumerable<GridPos> ShelfEdgeCells()
+        {
+            GridPos[] offsets = { new(0, -1), new(0, 1), new(-1, 0), new(1, 0) };
+            foreach (var cell in WalkableCells())
+            {
+                foreach (var d in offsets)
+                {
+                    if (!IsWalkable(cell.X + d.X, cell.Y + d.Y)) { yield return cell; break; }
+                }
+            }
+        }
 
         // Breadth-first search: returns the next step from `start` toward `goal`.
         // Good enough for a store-sized grid — no need for A* here.

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -16,7 +18,18 @@ namespace StoreChase
 
         private GridMap _map = null!;
         private Player _player = null!;
-        private Critter _critter = null!;
+
+        // A whole cast of them, not one: the store is a heist, and which cats
+        // turn up changes the round. Tackled critters are retired (Tackle sets
+        // the flag) and removed from the list.
+        private readonly List<Critter> _critters = new();
+        private readonly Random _rng = new();
+
+        // The objective: loot, the alarm that fills while it's missing, and the
+        // ball you can throw to move a cat off whatever it's doing.
+        private ItemField _items = null!;
+        private AlarmSystem _alarm = null!;
+        private Ball _ball = null!;
 
         private BasicEffect _effect = null!;
         private Camera _camera = null!;
@@ -24,25 +37,48 @@ namespace StoreChase
         private RainbowTitle _title = null!;
 
         // Cube/floor meshes, built once and reused (just repositioned via world matrix).
-        private VertexPositionNormalColor[] _wallVerts = null!;
-        private VertexPositionNormalColor[] _floorVerts = null!;
+        private VertexPositionNormalColorTexture[] _wallVerts = null!;
+        private VertexPositionNormalColorTexture[] _floorVerts = null!;
         private PersonPart[] _playerParts = null!;
         private float _walkPhase; // drives the player's limb swing
         private Texture2D _uiPixel = null!;
+
+        // Procedurally generated store surfaces (floor tiles, shelf boards,
+        // cardboard). One BasicEffect draws them all — the texture bound per
+        // batch is what distinguishes them, and the meshes carry the UVs.
+        private StoreTextures.Set _textures = null!;
 
         // The cat replaces the procedural critter cube. It needs its own
         // effect (normal-mapped and textured, not vertex-colored) and a local
         // transform to normalize the raw model into the game's world
         // scale/orientation — see BuildCritterModelTransform for why each
         // piece is there.
-        private StaticMesh? _catMesh;
+        private StaticMesh? _catSourceMesh;
         private Effect _catEffect = null!;
         private Texture2D? _flatNormalMap;
-        private CatWalkAnimator? _catAnim;
         private Matrix _critterModelTransform = Matrix.Identity;
 
-        private bool _won = false;
+        // One rig per critter, all sharing the same mesh: the vertices are
+        // rewritten in place each frame, so a shared mesh would make every cat
+        // adopt the last one drawn. Each critter therefore gets its own parsed
+        // copy of the geometry (see LoadCritterModels).
+        private readonly Dictionary<Critter, CatAnimator> _catAnims = new();
+        private readonly Dictionary<Critter, StaticMesh> _catMeshes = new();
+
+        // A small cube, reused for the loot boxes and the ball.
+        private VertexPositionNormalColorTexture[] _propVerts = null!;
+
+        private RunPhase _phase = RunPhase.Playing;
         private float _elapsedTime = 0f;
+
+        // Cached per-frame values shared by the critters and the HUD.
+        private GridPos? _ballCell;
+        private GridPos? _lootTarget;
+        private int _ballCooldownFrames;
+
+        public const int LootCount = 5;
+        public const int CritterCount = 3;
+        public const float CarryHeight = 1.5f;
 
         public Game1()
         {
@@ -59,9 +95,6 @@ namespace StoreChase
             _graphics.PreferredBackBufferHeight = 1200;
             _graphics.ApplyChanges();
 
-            _player = new Player(new GridPos(1, 1), CellSize);
-            _critter = new Critter(new GridPos(_map.Width - 2, _map.Height - 2), CellSize, new SmartAnimalAI());
-
             _input = new InputSystem(new KeyboardMouseInput(), new GamePadInput());
 
             _title = new RainbowTitle();
@@ -69,7 +102,12 @@ namespace StoreChase
             SetupCamera();
 
             new RunStats(EventSystem.Instance);
-            EventSystem.Instance.Publish(new GameStartedEvent());
+
+            // Synthesised up front so the first cue doesn't stutter. Safe to
+            // fail: Sfx turns itself off when there's no audio device.
+            Sfx.Initialise();
+
+            StartRound();
 
             base.Initialize();
         }
@@ -77,6 +115,73 @@ namespace StoreChase
         private void SetupCamera()
         {
             _camera = new Camera(GraphicsDevice, _map.Width * CellSize, _map.Height * CellSize, CellSize);
+        }
+
+        // Spawns the player, a cast of cats, the merchandise and the alarm.
+        // Called on startup and on every restart, so a round is always
+        // reproducible from this one method.
+        private void StartRound()
+        {
+            _player = new Player(new GridPos(1, 1), CellSize);
+
+            _critters.Clear();
+
+            // The meshes are keyed on the critter objects, and each is a full
+            // copy of the cat's ~36k vertices, so dropping the cast has to drop
+            // them too or every restart leaks one model per cat.
+            _catAnims.Clear();
+            _catMeshes.Clear();
+            foreach (var cell in SpawnPoints())
+            {
+                var profile = CritterProfile.Random(_rng);
+                var ai = new SmartAnimalAI(profile, _rng);
+                _critters.Add(new Critter(cell, CellSize, ai, profile));
+            }
+
+            _items ??= new ItemField(_map, CellSize, _rng);
+            _items.Spawn(LootCount, _player.Cell);
+
+            _alarm ??= new AlarmSystem();
+            _alarm.Reset();
+
+            _ball ??= new Ball();
+            _ball.Configure(CellSize);
+            _ball.Clear();
+
+            _elapsedTime = 0f;
+            _phase = RunPhase.Playing;
+            _endMessage = "";
+            _ballCooldownFrames = 0;
+
+            // A fresh cast needs a fresh set of animated meshes. Do this after
+            // the critters list is rebuilt, since the meshes are keyed on the
+            // critter objects. LoadCritterModels is a no-op for critters that
+            // already have one.
+            LoadCritterModels();
+
+            EventSystem.Instance.Publish(new GameStartedEvent());
+        }
+
+        // Somewhere apart from the player's start (1,1) and spread out, so the
+        // cats don't all pile into one aisle. The far end of the store is the
+        // obvious "they're over there" choice.
+        private IEnumerable<GridPos> SpawnPoints()
+        {
+            var start = new GridPos(1, 1);
+            var candidates = _map.WalkableCells()
+                .Where(c => !_map.IsCounter(c.X, c.Y))
+                .Where(c => Math.Abs(c.X - start.X) + Math.Abs(c.Y - start.Y) > 5)
+                .ToList();
+
+            if (candidates.Count == 0) yield return start;
+            for (int i = 0; i < CritterCount && candidates.Count > 0; i++)
+            {
+                // Bias toward the far half of the store so the round opens with
+                // a moment of quiet before anything happens.
+                int idx = _rng.Next(candidates.Count / 2, candidates.Count);
+                yield return candidates[idx];
+                candidates.RemoveAt(idx);
+            }
         }
 
         protected override void LoadContent()
@@ -87,24 +192,42 @@ namespace StoreChase
             {
                 VertexColorEnabled = true,
                 LightingEnabled = true,
-                
+                TextureEnabled = true,
             };
             _effect.EnableDefaultLighting();
             // Default lighting comes from an angle; for a top-down view we mostly
             // care about the top faces reading brightly, which EnableDefaultLighting
             // already handles reasonably well.
 
-            _wallVerts = CubeMesh.Build(new Color(90, 60, 40));       // shelf brown
+            _textures = StoreTextures.Build(GraphicsDevice);
+
+            // Shelf cubes are all the same size, so one mesh serves the whole
+            // store. The repeats are in mesh space and get stretched by the
+            // world scale in Draw(), so they describe texel density for this
+            // exact shelf size: ~2 tiles across a 2-unit face, 3 up a 3-unit face.
+            _wallVerts = CubeMesh.Build(Color.White, 2f, 3f);
             _playerParts = PersonMesh.Build();
-            _floorVerts = CubeMesh.BuildFloorQuad(new Color(50, 50, 55), _map.Width * CellSize, _map.Height * CellSize);
+
+            // One floor tile every 2 world units (= CellSize), which lines the
+            // grout up with the shelf grid.
+            float floorWidth = _map.Width * CellSize;
+            float floorDepth = _map.Height * CellSize;
+            _floorVerts = CubeMesh.BuildFloorQuad(
+                Color.White, floorWidth, floorDepth, floorWidth / CellSize, floorDepth / CellSize);
 
             _uiPixel = new Texture2D(GraphicsDevice, 1, 1);
             _uiPixel.SetData(new[] { Color.White });
 
             LoadCatModel();
+            _propVerts = CubeMesh.Build(Color.White, 1f, 1f);
 
             // Status/timer text is rendered from this font (see DrawUiOverlay).
             _font = Content.Load<SpriteFont>("DefaultFont");
+
+            // Initialize runs before LoadContent, so the first round's cast was
+            // created before the cat geometry existed. Give them their meshes
+            // now; StartRound does the same for every later round.
+            LoadCritterModels();
         }
 
         // Loads the cat OBJ/MTL/textures from Content/Models at runtime
@@ -113,8 +236,7 @@ namespace StoreChase
         // cell, standing upright, facing a known direction.
         private void LoadCatModel()
         {
-            string modelPath = Path.Combine(Content.RootDirectory, "Models", "Cat.obj");
-            _catMesh = ObjLoader.Load(GraphicsDevice, modelPath);
+            _catSourceMesh = ObjLoader.Load(GraphicsDevice, CatModelPath());
 
             // Custom normal-mapped shader (see Content/Effects/CatNormalMap.fx).
             // Its lighting is deliberately the same key+fill+back setup as
@@ -125,8 +247,8 @@ namespace StoreChase
             // reliably apply HLSL uniform initializers, and if the light colors
             // come up zero the pixel shader returns black (an "invisible" cat).
             _catEffect = Content.Load<Effect>("Effects/CatNormalMap");
-            _catEffect.Parameters["DiffuseTexture"].SetValue(_catMesh.DiffuseTexture);
-            _catEffect.Parameters["NormalTexture"].SetValue(_catMesh.NormalMapTexture ?? FlatNormalMap());
+            _catEffect.Parameters["DiffuseTexture"].SetValue(_catSourceMesh.DiffuseTexture);
+            _catEffect.Parameters["NormalTexture"].SetValue(_catSourceMesh.NormalMapTexture ?? FlatNormalMap());
             _catEffect.Parameters["AmbientColor"].SetValue(new Vector3(0.5f, 0.5f, 0.5f));
             _catEffect.Parameters["KeyLightDirection"].SetValue(new Vector3(0.5265408f, 0.5735765f, 0.6275069f));
             _catEffect.Parameters["KeyLightColor"].SetValue(new Vector3(1.0f, 0.9607844f, 0.8078432f));
@@ -136,9 +258,26 @@ namespace StoreChase
             _catEffect.Parameters["BackLightColor"].SetValue(new Vector3(0.8078432f, 0.8039216f, 0.7647059f));
             _catEffect.Parameters["SpecularStrength"].SetValue(0.2f);
             _catEffect.Parameters["SpecularShininess"].SetValue(16f);
+            _catEffect.Parameters["Tint"].SetValue(Vector3.One);  // push every uniform from C#
 
-            _critterModelTransform = BuildCritterModelTransform(_catMesh);
-            _catAnim = new CatWalkAnimator(_catMesh);
+            _critterModelTransform = BuildCritterModelTransform(_catSourceMesh);
+        }
+
+        private string CatModelPath() => Path.Combine(Content.RootDirectory, "Models", "Cat.obj");
+
+        // Each critter animates its own copy of the geometry, because
+        // CatAnimator rewrites mesh vertices in place every frame. Sharing one
+        // mesh would mean every cat in frame shows whichever one was drawn last.
+        // The geometry is parsed per cat; the textures and the effect are shared.
+        private void LoadCritterModels()
+        {
+            foreach (var critter in _critters)
+            {
+                if (_catMeshes.ContainsKey(critter)) continue;
+                var mesh = ObjLoader.ParseGeometry(CatModelPath());
+                _catMeshes[critter] = mesh;
+                _catAnims[critter] = new CatAnimator(mesh);
+            }
         }
 
         // A 1x1 blue (0,0,1) normal map — "no bump" — used when the model has
@@ -230,38 +369,256 @@ namespace StoreChase
 
             _camera.Update(gameTime, input, _player.WorldPos, _player.FacingAngle);
 
-            if (!_won)
+            if (_phase == RunPhase.Playing)
             {
                 _elapsedTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
-                // Isometric walks the grid cell to cell; first-person moves the
-                // player freely (camera-relative) with wall sliding.
-                bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
-                Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
-                _player.Update(gameTime, _map, moveDir, freeMove);
-                _critter.Update(gameTime, _map, CellSize, _player.Cell);
-
-                if (_critter.Caught)
-                {
-                    _won = true;
-                    EventSystem.Instance.Publish(new GameWonEvent(_elapsedTime));
-                }
+                UpdatePlay(gameTime, input);
             }
-            else
+            else if (input.Restart)
             {
-                if (input.Restart) Restart();
+                StartRound();
             }
 
             base.Update(gameTime);
         }
 
-        private void Restart()
+        private void UpdatePlay(GameTime gameTime, in InputState input)
         {
-            _player = new Player(new GridPos(1, 1), CellSize);
-            _critter = new Critter(new GridPos(_map.Width - 2, _map.Height - 2), CellSize, new SmartAnimalAI());
-            _elapsedTime = 0f;
-            _won = false;
-            EventSystem.Instance.Publish(new GameStartedEvent());
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // Isometric walks the grid cell to cell; first-person moves the
+            // player freely (camera-relative) with wall sliding.
+            bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
+            Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
+            _player.Update(gameTime, _map, moveDir, freeMove);
+
+            // Throwing. Only in first person, where "where am I looking" is an
+            // aim; from the isometric camera the throw direction would just be
+            // the movement keys, which is too easy to get wrong.
+            if (input.Throw && freeMove && _ballCooldownFrames <= 0)
+            {
+                // Always thrown where the camera looks, not where the player is
+                // walking. Aiming is the whole point of the throw, and mixing
+                // the two (throwing backwards when you back off) makes it
+                // unpredictable.
+                Vector3 eye = _player.WorldPos + new Vector3(0f, 1.2f, 0f);
+                _ball.Throw(eye, _camera.FacingOnPlane);
+                _ballCooldownFrames = 30;
+                Sfx.Play(SfxId.Throw, volume: 0.4f);
+            }
+            if (_ballCooldownFrames > 0) _ballCooldownFrames--;
+
+            bool wasSettled = _ball.Settled;
+            _ball.Update(dt, _map);
+            _ballCell = _ball.Active ? _ball.Cell : null;
+
+            // A bounce is the ball announcing itself, which is the whole point
+            // of throwing it: the cats hear it.
+            if (_ball.Active && wasSettled != _ball.Settled)
+                Sfx.PlayAt(SfxId.Bounce, _player.WorldPos, _ball.Position, 18f, 0.5f);
+
+            UpdateCritters(gameTime);
+            UpdateLoot(dt);
+            UpdateHeartbeat(dt);
+
+            _alarm.Update(dt, _items.StolenCount, _items.Held != null, _items.AllSecured);
+            UpdateAlarmAudio(dt);
+
+            if (_alarm.Tripped)
+            {
+                EndRound(RunPhase.Lost, "The alarm went off.");
+            }
+            else if (_items.AllSecured)
+            {
+                EndRound(RunPhase.Won, "Everything's back on the shelf.");
+            }
         }
+
+        // The alarm meter is the round's clock, so it gets an audible clock too:
+        // a blip whose rate climbs as it fills. Starting only once the meter is
+        // past a third keeps the early, quiet part of a round silent.
+        private void UpdateAlarmAudio(float dt)
+        {
+            if (_alarm.Cause == AlarmCause.Calm || _alarm.Level < 0.33f)
+            {
+                _blipTimer = 0f;
+                return;
+            }
+
+            // 0.9s between blips at a third full, down to about 0.25s at the top.
+            float urgency = MathHelper.Clamp((_alarm.Level - 0.33f) / 0.67f, 0f, 1f);
+            _blipTimer -= dt;
+            if (_blipTimer <= 0f)
+            {
+                _blipTimer = MathHelper.Lerp(0.9f, 0.25f, urgency);
+                Sfx.Play(SfxId.AlarmBlip, volume: 0.25f + 0.3f * urgency);
+            }
+        }
+
+        private float _blipTimer;
+
+        /// <summary>
+        /// The proximity cue: a heartbeat that quickens and rises as the nearest
+        /// cat closes in, and stops the moment it's out of range.
+        ///
+        /// This is the one piece of information the isometric camera can't give
+        /// you cheaply — a cat two aisles away is off the edge of a zoomed-in
+        /// view, and a shelf maze has a lot of blind corners. It costs one
+        /// timer, and it means "something is right behind me" is a thing you
+        /// can hear rather than something you have to notice.
+        /// </summary>
+        private void UpdateHeartbeat(float dt)
+        {
+            float nearest = float.MaxValue;
+            foreach (var critter in _critters)
+            {
+                float d = Vector3.Distance(_player.WorldPos, critter.WorldPos);
+                if (d < nearest) nearest = d;
+            }
+
+            if (nearest > HeartbeatRange)
+            {
+                _heartTimer = 0f;
+                return;
+            }
+
+            // 0 = at the edge of range, 1 = right on top of you.
+            float closeness = MathHelper.Clamp(1f - nearest / HeartbeatRange, 0f, 1f);
+
+            // ~1.15s between beats when distant, ~0.42s when it's on you. The
+            // curve is eased so the change is gradual at first: the alarm should
+            // creep up, not flip from calm to panic.
+            float eased = closeness * closeness;
+            _heartTimer -= dt;
+            if (_heartTimer <= 0f)
+            {
+                _heartTimer = MathHelper.Lerp(1.15f, 0.42f, eased);
+                // Louder *and* higher pitched as it closes, so it reads as
+                // panic rather than as a volume change.
+                Sfx.Play(SfxId.Heartbeat,
+                    volume: 0.10f + 0.34f * eased,
+                    pitch: -0.25f + 0.45f * eased);
+            }
+        }
+
+        private const float HeartbeatRange = 9f; // world units
+        private float _heartTimer;
+
+        private void UpdateCritters(GameTime gameTime)
+        {
+            // Rebuilt each frame: it's a struct of two delegates, and it keeps
+            // the per-critter data (sight, being watched) out of the shared
+            // context.
+            var locus = new CritterLocus(
+                Map: _map,
+                PlayerCell: _player.Cell,
+                Ball: _ballCell,
+                LootTarget: _lootTarget,
+                StolenCount: _items.StolenCount,
+                LootUnderfoot: c => _items.LooseAt(c.Cell),
+                TrySteal: c => TrySteal(c));
+
+            for (int i = _critters.Count - 1; i >= 0; i--)
+            {
+                var critter = _critters[i];
+                UpdateAwareness(critter);
+                critter.Update(gameTime, locus);
+
+                if (critter.Tackled)
+                {
+                    // A tackle makes it drop whatever it had, right here.
+                    bool hadLoot = critter.Carrying;
+                    _items.DropFrom(critter, critter.Cell);
+                    critter.Carrying = false;
+                    _critters.RemoveAt(i);
+                    _catAnims.Remove(critter);
+                    _catMeshes.Remove(critter);
+                    Sfx.Play(SfxId.Tackle, volume: 0.7f);
+                    if (hadLoot)
+                    {
+                        Sfx.Play(SfxId.Drop, volume: 0.6f);
+                        // Recovering the goods is a small win; let the meter off
+                        // a little so a clean tackle feels like progress.
+                        _alarm.Ping();
+                    }
+                }
+            }
+        }
+
+        // Works out, per critter, whether it can see the player and whether the
+        // player is looking at it. Both feed the AI, and the first-person camera
+        // being a way to pin a Nervous cat depends on the second.
+        private void UpdateAwareness(Critter critter)
+        {
+            int dist = Math.Abs(critter.Cell.X - _player.Cell.X) + Math.Abs(critter.Cell.Y - _player.Cell.Y);
+            bool couldSee = dist <= critter.Profile.VisionRadius &&
+                            _map.HasLineOfSight(critter.Cell, _player.Cell);
+
+            // The first frame it notices you, it says so. Gated per critter so
+            // it doesn't meow every frame while standing in your eyeline.
+            if (couldSee && !critter.CanSeePlayer) Sfx.Play(SfxId.Meow, volume: 0.35f);
+
+            critter.CanSeePlayer = couldSee;
+
+            // Judged from the player's eye: at head height in first person, and
+            // from above in the isometric view (where the 90-degree cone means
+            // anything in the store counts as visible, which is exactly the
+            // asymmetry that makes first-person worth switching to).
+            float eyeHeight = _camera.Mode == CameraViewMode.FirstPerson
+                ? Camera.FirstPersonEyeHeight
+                : 1f;
+            critter.BeingWatched =
+                _camera.IsInViewCone(_player.WorldPos + new Vector3(0f, eyeHeight, 0f), critter.WorldPos);
+        }
+
+        private bool TrySteal(Critter critter)
+        {
+            var item = _items.LooseAt(critter.Cell);
+            if (item == null) return false;
+
+            _items.TakeByCritter(item, critter);
+            _alarm.Ping();
+            Sfx.Play(SfxId.Steal, volume: 0.5f);
+            EventSystem.Instance.Publish(new ItemStolenEvent(critter.Profile.Name));
+            return true;
+        }
+
+        // Player-side loot: pick up what's underfoot, secure it at the counter.
+        private void UpdateLoot(float dt)
+        {
+            if (_items.Held == null)
+            {
+                var picked = _items.TryPickUp(_player.Cell);
+                if (picked != null)
+                {
+                    _alarm.Ping();
+                    Sfx.Play(SfxId.PickUp, volume: 0.6f);
+                }
+            }
+
+            if (_items.TrySecure(_player.Cell))
+            {
+                _alarm.Ping();
+                Sfx.Play(SfxId.Secure, volume: 0.7f);
+                EventSystem.Instance.Publish(new ItemSecuredEvent());
+            }
+
+            _items.Update(dt, _player.Cell, CarryHeight);
+            _lootTarget = _items.NearestLoose(_player.Cell)?.Cell;
+        }
+
+        private void EndRound(RunPhase phase, string message)
+        {
+            _phase = phase;
+            _endMessage = message;
+            Sfx.Play(phase == RunPhase.Won ? SfxId.Win : SfxId.Lose, volume: 0.8f);
+            if (phase == RunPhase.Won)
+                EventSystem.Instance.Publish(new GameWonEvent(_elapsedTime));
+            else
+                EventSystem.Instance.Publish(new GameLostEvent(_elapsedTime, _items.SecuredCount));
+        }
+
+        private string _endMessage = "";
 
         protected override void Draw(GameTime gameTime)
         {
@@ -274,9 +631,10 @@ namespace StoreChase
             _effect.AmbientLightColor = new Vector3(0.5f, 0.5f, 0.5f); // Fills in shadows
             _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
             // Floor (single quad at origin, Y=0)
-            DrawMesh(_floorVerts, Matrix.Identity);
+            DrawMesh(_floorVerts, Matrix.Identity, _textures.Floor);
 
-            // Walls: one cube per shelf tile, scaled up in height a bit for visual clarity
+            // Shelves: one cube per blocked tile. The counter row is drawn in a
+            // different material so the goal is visible from across the store.
             for (int y = 0; y < _map.Height; y++)
             {
                 for (int x = 0; x < _map.Width; x++)
@@ -285,18 +643,73 @@ namespace StoreChase
                     {
                         var world = Matrix.CreateScale(CellSize * 0.95f, CellSize * 1.5f, CellSize * 0.95f)
                                     * Matrix.CreateTranslation(x * CellSize, 0f, y * CellSize);
-                        DrawMesh(_wallVerts, world);
+                        DrawMesh(_wallVerts, world, _textures.Shelf);
                     }
                 }
             }
 
+            DrawCounter();
             DrawPlayer(gameTime);
-
-            DrawCritter(gameTime);
-
+            DrawLoot();
+            DrawBall();
+            DrawCritters(gameTime);
             DrawUiOverlay();
 
             base.Draw(gameTime);
+        }
+
+        // The till: a low slab along the counter cells. Drawn as a flat
+        // decal-ish box rather than a shelf so it doesn't block sightlines.
+        private void DrawCounter()
+        {
+            for (int x = GridMap.CounterStart; x <= GridMap.CounterEnd; x++)
+            {
+                if (!_map.IsCounter(x, GridMap.CounterRow)) continue;
+                var world = Matrix.CreateScale(CellSize * 0.9f, GridMap.CounterHeight, CellSize * 0.5f)
+                            * Matrix.CreateTranslation(x * CellSize, 0f, GridMap.CounterRow * CellSize);
+                DrawMesh(_propVerts, world, _textures.Counter);
+            }
+        }
+
+        // Loot as a small cardboard box per item, scaled up a little when
+        // secured so the recovered pile reads at a glance. Anything a critter
+        // is carrying is drawn with that critter instead (see DrawCritters) —
+        // what a cat is holding is the single most important thing on screen.
+        private void DrawLoot()
+        {
+            foreach (var item in _items.Items)
+            {
+                if (item.State == LootState.Carried) continue;
+
+                DrawLootBox(item.WorldPos, item.Tint, CellSize * (item.IsSecured ? 0.34f : 0.28f));
+            }
+        }
+
+        private void DrawLootBox(Vector3 position, Color tint, float size)
+        {
+            var world = Matrix.CreateScale(size, size, size) * Matrix.CreateTranslation(position);
+            DrawMesh(_propVerts, world, _textures.Cardboard, tint);
+        }
+
+        private void DrawBall()
+        {
+            if (!_ball.Active) return;
+
+            // A rolling ball: spin it about the axis perpendicular to its travel
+            // so it reads as rolling rather than sliding.
+            Vector3 travel = _ball.Velocity;
+            travel.Y = 0f;
+            float speed = travel.Length();
+            var spin = speed > 0.01f
+                ? Matrix.CreateFromAxisAngle(Vector3.Normalize(Vector3.Cross(Vector3.Up, travel)), speed * 0.12f)
+                : Matrix.Identity;
+
+            float size = Ball.BallRadius * 2f;
+            var world = spin
+                        * Matrix.CreateScale(size, size, size)
+                        * Matrix.CreateTranslation(_ball.Position);
+
+            DrawMesh(_propVerts, world, _textures.Flat, new Color(226, 92, 78));
         }
 
         private void DrawPlayer(GameTime gameTime)
@@ -336,57 +749,119 @@ namespace StoreChase
                 {
                     world = facing * placement;
                 }
-                DrawMesh(part.Vertices, world);
+                DrawMesh(part.Vertices, world, _textures.Flat);
             }
         }
 
-        // Draws the cat model at the critter's current position, facing its
-        // direction of travel. Falls back to nothing drawn (not a cube) if
-        // the model failed to load, so a load failure is obvious rather than
-        // silently swapped for a placeholder shape.
-        private void DrawCritter(GameTime gameTime)
+        // Draws every critter. Each has its own mesh and rig (see
+        // LoadCritterModels) but they share the effect, its textures and its
+        // parameters, which are re-pushed per cat.
+        private void DrawCritters(GameTime gameTime)
         {
-            if (_catMesh == null) return;
-
-            // Procedurally swing the legs (see CatWalkAnimator) before drawing;
-            // it rewrites the mesh's vertex positions/normals in place.
-            _catAnim?.Update((float)gameTime.ElapsedGameTime.TotalSeconds, _critter.IsMoving);
-
-            // Order matters: normalize the raw model (transform), then face
-            // its travel direction (rotation), then place it in the world
-            // (translation) — each stage operates in the space the previous
-            // one produced.
-            var facing = Matrix.CreateRotationY(_critter.FacingAngle);
-            var placement = Matrix.CreateTranslation(_critter.WorldPos);
-            var world = _critterModelTransform * facing * placement;
-
-            _catEffect.Parameters["World"].SetValue(world);
-            _catEffect.Parameters["View"].SetValue(_camera.View);
-            _catEffect.Parameters["Projection"].SetValue(_camera.Projection);
-
-            // Straight-on sheen direction for the (small) specular term.
+            float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
             Vector3 cameraPos = Matrix.Invert(_camera.View).Translation;
-            _catEffect.Parameters["ViewDirection"].SetValue(cameraPos - world.Translation);
 
-            // The mip chains are built by ObjLoader; anisotropic filtering is
-            // applied here (after pass.Apply, which binds the effect's default
-            // sampler state) so the diffuse and normal maps stop aliasing when
-            // the cat is small on screen. Slots match the shader's s0/s1.
-            foreach (var pass in _catEffect.CurrentTechnique.Passes)
+            foreach (var critter in _critters)
             {
-                pass.Apply();
-                GraphicsDevice.SamplerStates[0] = SamplerState.AnisotropicClamp;
-                GraphicsDevice.SamplerStates[1] = SamplerState.AnisotropicClamp;
-                GraphicsDevice.DrawUserIndexedPrimitives(
-                    PrimitiveType.TriangleList,
-                    _catMesh.Vertices, 0, _catMesh.Vertices.Length,
-                    _catMesh.Indices, 0, _catMesh.Indices.Length / 3);
+                if (!_catMeshes.TryGetValue(critter, out var mesh)) continue;
+                if (!_catAnims.TryGetValue(critter, out var anim)) continue;
+
+                // Drive the rig before drawing; it rewrites the mesh's vertices
+                // in place (see CatAnimator). The head tracks the player when
+                // they've been noticed, which is what gives the cat a sense of
+                // seeing you.
+                anim.Update(BuildCatAnimInput(critter, dt));
+
+                // Order matters: normalize the raw model (transform), scale to
+                // this species' size, face its travel direction (rotation),
+                // then place it in the world (translation) — each stage operates
+                // in the space the previous one produced.
+                float scale = critter.Profile.Scale;
+                var world = _critterModelTransform
+                            * Matrix.CreateScale(scale)
+                            * Matrix.CreateRotationY(critter.FacingAngle)
+                            * Matrix.CreateTranslation(critter.WorldPos);
+
+                _catEffect.Parameters["World"].SetValue(world);
+                _catEffect.Parameters["Tint"].SetValue(critter.Profile.TintVector);
+                _catEffect.Parameters["View"].SetValue(_camera.View);
+                _catEffect.Parameters["Projection"].SetValue(_camera.Projection);
+                _catEffect.Parameters["ViewDirection"].SetValue(cameraPos - world.Translation);
+
+                // The mip chains are built by ObjLoader; anisotropic filtering
+                // is applied here (after pass.Apply, which binds the effect's
+                // default sampler state) so the diffuse and normal maps stop
+                // aliasing when the cat is small on screen. Slots match the
+                // shader's s0/s1.
+                foreach (var pass in _catEffect.CurrentTechnique.Passes)
+                {
+                    pass.Apply();
+                    GraphicsDevice.SamplerStates[0] = SamplerState.AnisotropicClamp;
+                    GraphicsDevice.SamplerStates[1] = SamplerState.AnisotropicClamp;
+                    GraphicsDevice.DrawUserIndexedPrimitives(
+                        PrimitiveType.TriangleList,
+                        mesh.Vertices, 0, mesh.Vertices.Length,
+                        mesh.Indices, 0, mesh.Indices.Length / 3);
+                }
+
+                // Whatever it's holding, drawn after the body so it sits in
+                // front of the cat rather than inside it. ItemField keeps the
+                // item's WorldPos on the carrier's shoulder, so this just
+                // follows the critter.
+                if (critter.Carrying)
+                {
+                    var carried = _items.Items.FirstOrDefault(i => i.Carrier == critter);
+                    if (carried != null) DrawLootBox(carried.WorldPos, carried.Tint, CellSize * 0.26f);
+                }
             }
         }
 
-        private void DrawMesh(VertexPositionNormalColor[] verts, Matrix world)
+        // Assembles the per-frame cat animation request. The head-look yaw is
+        // expressed in the cat's own frame (0 = its facing, + = to its right)
+        // because the rig works in model space, and the model's +X axis ends up
+        // as the cat's left after BuildCritterModelTransform.
+        private CatAnimInput BuildCatAnimInput(Critter critter, float dt)
+        {
+            Vector3 toPlayer = _player.WorldPos - critter.WorldPos;
+            toPlayer.Y = 0f;
+
+            // Only track the player once the cat has actually noticed them.
+            bool hasTarget = toPlayer.LengthSquared() > 0.01f && critter.CanSeePlayer;
+            float yaw = 0f, pitch = 0f;
+            if (hasTarget)
+            {
+                float bearing = MathF.Atan2(toPlayer.X, toPlayer.Z);
+                // Normalize the difference into -pi..pi so the head never spins
+                // the long way round.
+                yaw = -MathF.Atan2(MathF.Sin(bearing - critter.FacingAngle),
+                                   MathF.Cos(bearing - critter.FacingAngle));
+                // The player's head is above the cat's, so looking at them is a
+                // slight upward tilt.
+                pitch = MathHelper.Clamp(Camera.FirstPersonEyeHeight * 0.5f / MathF.Max(1f, toPlayer.Length()),
+                                         -0.4f, 0.4f);
+            }
+
+            return new CatAnimInput(critter.Pose, critter.IsMoving, hasTarget, yaw, pitch, dt);
+        }
+
+        private void DrawMesh(
+            VertexPositionNormalColorTexture[] verts, Matrix world, Texture2D texture, Color? tint = null)
         {
             _effect.World = world;
+            _effect.Texture = texture;
+
+            // BasicEffect's DiffuseColor is sticky state that multiplies the
+            // texture, so it has to be reset every draw or a tinted prop would
+            // leave the shelves behind it in the same colour.
+            _effect.DiffuseColor = tint.HasValue
+                ? new Vector3(tint.Value.R / 255f, tint.Value.G / 255f, tint.Value.B / 255f)
+                : Vector3.One;
+            // Tiling surfaces (floor grout, shelf boards) need a wrapping
+            // sampler, and anisotropic filtering since the tilted perspective
+            // view looks along the floor at a grazing angle. Both are safe
+            // because every generated texture has a complete mip chain.
+            GraphicsDevice.SamplerStates[0] = SamplerState.AnisotropicWrap;
+
             foreach (var pass in _effect.CurrentTechnique.Passes)
             {
                 pass.Apply();
@@ -399,25 +874,208 @@ namespace StoreChase
             // SpriteBatch draws are 2D-over-3D, fine as a screen-space overlay.
             _spriteBatch.Begin();
 
-            // Simple status indicator without a font (see README to add real text).
-            var indicatorColor = _won ? Color.LimeGreen : Color.Gray;
-            _spriteBatch.Draw(_uiPixel, new Rectangle(10, 10, 20, 20), indicatorColor);
-
-            if (_font != null)
+            // The font comes from the content pipeline and could in principle
+            // fail to load; without it there's no text HUD, but the 3D scene
+            // and the alarm bar still draw.
+            if (_font == null)
             {
-                DrawRainbowTitle(_font);
-
-                string view = _camera.Mode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
-                string status = _won ? $"Caught it! Time: {_elapsedTime:F1}s  (R to restart)"
-                                      : $"Time: {_elapsedTime:F1}s";
-                _spriteBatch.DrawString(_font, status, new Vector2(40, 10), Color.White);
-                _spriteBatch.DrawString(_font, $"[V] view: {view}", new Vector2(40, 34), Color.LightGray);
+                _spriteBatch.End();
+                GraphicsDevice.DepthStencilState = DepthStencilState.Default;
+                return;
             }
+
+            DrawRainbowTitle(_font);
+            DrawObjectivePanel();
+            DrawAlarmMeter();
+            DrawHoldHint();
+            DrawThiefMarker();
+            DrawEndBanner();
 
             _spriteBatch.End();
 
             // Re-enable depth state for next frame's 3D draw (SpriteBatch changes it).
             GraphicsDevice.DepthStencilState = DepthStencilState.Default;
+        }
+
+        // The objective readout: how much is back, how much is still out, and
+        // the timer. This is the whole scoreboard, so it stays in one place.
+        private void DrawObjectivePanel()
+        {
+            var font = _font!;
+            int secured = _items.SecuredCount;
+            int total = _items.TotalCount;
+            int carried = _items.Held != null ? 1 : 0;
+            int loose = Math.Max(0, total - secured - carried - _items.StolenCount);
+
+            var line = new Vector2(16, 40);
+            const int step = 22;
+
+            _spriteBatch.DrawString(font, $"Time  {_elapsedTime:F1}s", line, Color.White);
+            line.Y += step;
+            _spriteBatch.DrawString(font, $"Behind the counter  {secured}/{total}",
+                line, secured == total ? Color.LimeGreen : Color.White);
+            line.Y += step;
+
+            if (_items.Held != null)
+            {
+                _spriteBatch.DrawString(font, "You're carrying something - get to the counter!",
+                    line, new Color(240, 200, 90));
+            }
+            else if (_items.StolenCount > 0)
+            {
+                _spriteBatch.DrawString(font, $"On the move: {_items.StolenCount}", line, new Color(240, 140, 120));
+            }
+            else if (loose > 0)
+            {
+                _spriteBatch.DrawString(font, $"{loose} still on the shelves", line, Color.LightGray);
+            }
+
+            // Species list, so the player can tell who's who.
+            line.Y += step * 2;
+            _spriteBatch.DrawString(font, "In the store:", line, Color.DimGray);
+            line.Y += step;
+            foreach (var critter in _critters)
+            {
+                string flag = critter.Carrying ? "  [!] carrying" : "";
+                _spriteBatch.DrawString(font, $"  {critter.Profile.Name}{flag}",
+                    line, critter.Profile.Tint);
+            }
+
+            string view = _camera.Mode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
+            _spriteBatch.DrawString(font, $"[V] view: {view}", new Vector2(16, GraphicsDevice.Viewport.Height - 60), Color.LightGray);
+        }
+
+        // The alarm: a bar that fills as the meter rises, tinted by cause so
+        // you can tell at a glance whether the cat or you are the problem.
+        private void DrawAlarmMeter()
+        {
+            const int width = 260, height = 16;
+            int x = (GraphicsDevice.Viewport.Width - width) / 2;
+            int y = GraphicsDevice.Viewport.Height - 44;
+
+            var fill = _alarm.Cause switch
+            {
+                AlarmCause.Thief => new Color(226, 84, 66),
+                AlarmCause.PlayerCarrying => new Color(230, 176, 64),
+                _ => new Color(96, 176, 112),
+            };
+
+            _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, height), new Color(30, 30, 38));
+            _spriteBatch.Draw(_uiPixel,
+                new Rectangle(x, y, (int)(width * _alarm.Level), height), fill);
+            _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, 2), new Color(90, 90, 100));
+
+            string label = _alarm.Cause switch
+            {
+                AlarmCause.Thief => "ALARM - something's being carried off!",
+                AlarmCause.PlayerCarrying => "ALARM - you're carrying it",
+                _ => "Store alarm",
+            };
+            _spriteBatch.DrawString(_font!, label, new Vector2(x, y - 22), fill);
+        }
+
+        // One contextual line of controls, so the keybinds that only matter at
+        // the moment they're useful aren't buried in the README.
+        private void DrawHoldHint()
+        {
+            if (_phase != RunPhase.Playing)
+            {
+                _spriteBatch.DrawString(_font!, "[R] new round", new Vector2(16, GraphicsDevice.Viewport.Height - 34), Color.White);
+                return;
+            }
+
+            string hint = _camera.Mode == CameraViewMode.FirstPerson
+                ? "[click] throw a ball    [V] overhead"
+                : "[V] first-person (to aim throws & pin nervous cats)";
+            _spriteBatch.DrawString(_font!, hint, new Vector2(16, GraphicsDevice.Viewport.Height - 34), Color.Gray);
+        }
+
+        /// <summary>
+        /// Marks whichever critter is currently carrying loot, in screen space.
+        ///
+        /// The alarm is a ~24 second fuse and the store is a shelf maze, so
+        /// without a marker the last thirty seconds of a lost round is spent
+        /// hunting for a cat you can't see. When the thief is on screen this is
+        /// a ring around it; when it isn't, it's an arrow pinned to the edge of
+        /// the viewport pointing the way to turn.
+        /// </summary>
+        private void DrawThiefMarker()
+        {
+            var thief = _critters.FirstOrDefault(c => c.Carrying);
+            if (thief == null) return;
+
+            var viewport = GraphicsDevice.Viewport;
+            Vector3 target = thief.WorldPos + new Vector3(0f, 1.4f, 0f);
+
+            // Project with the same row-vector convention the shader uses:
+            // mul(pos, View) then mul(..., Projection). The homogeneous divide
+            // by w is left to the caller.
+            Vector4 clip = Vector4.Transform(new Vector4(target, 1f), _camera.ViewProjection);
+
+            // Behind the camera, or past the far plane: w <= 0 and the point is
+            // on the wrong side of the eye, so there's no direction to point.
+            if (clip.W <= 0.0001f) return;
+
+            var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
+            var projected = new Vector2(
+                (ndc.X * 0.5f + 0.5f) * viewport.Width,
+                (0.5f - ndc.Y * 0.5f) * viewport.Height);
+            bool onScreen = projected.X >= 0 && projected.Y >= 0 &&
+                            projected.X < viewport.Width && projected.Y < viewport.Height;
+
+            if (onScreen)
+            {
+                // A ring of pixels around the cat, so it reads over any floor.
+                int cx = (int)projected.X, cy = (int)projected.Y;
+                for (int a = 0; a < 360; a += 6)
+                {
+                    float r = MathHelper.ToRadians(a);
+                    _spriteBatch.Draw(_uiPixel,
+                        new Rectangle(cx + (int)(MathF.Cos(r) * 18) - 1, cy + (int)(MathF.Sin(r) * 18) - 1, 3, 3),
+                        new Color(226, 84, 66));
+                }
+            }
+            else
+            {
+                // Clamp the direction to the viewport border. The sign of the
+                // off-screen components is what points the right way.
+                var from = new Vector2(viewport.Width / 2f, viewport.Height / 2f);
+                Vector2 dir = projected - from;
+                if (dir.LengthSquared() < 0.0001f) return;
+                dir = Vector2.Normalize(dir);
+
+                // Walk the ray until it leaves the box, so the marker sits on
+                // the edge however the aspect compares.
+                float tx = dir.X != 0f ? (viewport.Width / 2f) / MathF.Abs(dir.X) : float.MaxValue;
+                float ty = dir.Y != 0f ? (viewport.Height / 2f) / MathF.Abs(dir.Y) : float.MaxValue;
+                float t = MathF.Min(tx, ty) * 0.88f;
+                var edge = from + dir * t;
+
+                _spriteBatch.Draw(_uiPixel,
+                    new Rectangle((int)edge.X - 5, (int)edge.Y - 5, 10, 10),
+                    new Color(226, 84, 66));
+            }
+
+            // The species name, so the player learns which cat is the trouble.
+            _spriteBatch.DrawString(_font!, thief.Profile.Name,
+                new Vector2(projected.X - 40, projected.Y + 24), new Color(226, 84, 66));
+        }
+
+        private void DrawEndBanner()
+        {
+            if (_phase == RunPhase.Playing) return;
+
+            int w = GraphicsDevice.Viewport.Width, h = GraphicsDevice.Viewport.Height;
+            _spriteBatch.Draw(_uiPixel, new Rectangle(0, h / 2 - 70, w, 140), new Color(12, 12, 18));
+
+            var colour = _phase == RunPhase.Won ? Color.LimeGreen : Color.OrangeRed;
+            string title = _phase == RunPhase.Won ? "STORE SECURED" : "SHOPLIFTING SPOTTED";
+            _spriteBatch.DrawString(_font!, title,
+                new Vector2((w - _font!.MeasureString(title).X) / 2f, h / 2f - 40), colour);
+            _spriteBatch.DrawString(_font!, _endMessage,
+                new Vector2((w - _font.MeasureString(_endMessage).X) / 2f, h / 2f - 8), Color.White);
+            _spriteBatch.DrawString(_font!, $"Recovered {_items.SecuredCount}/{_items.TotalCount} in {_elapsedTime:F1}s",
+                new Vector2((w - _font.MeasureString("Recovered").X) / 2f, h / 2f + 16), Color.LightGray);
         }
 
         // "Store Chase" centered at the top of the screen. The base hue comes
@@ -444,6 +1102,7 @@ namespace StoreChase
         protected override void UnloadContent()
         {
             _title?.Dispose();
+            _textures?.Dispose();
             base.UnloadContent();
         }
     }
