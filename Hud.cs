@@ -26,6 +26,8 @@ public readonly record struct HudState(
     Matrix ViewProjection,
     IReadOnlyList<Critter> Critters,
     IReadOnlyList<LootItem> Loot,
+    GridPos PlayerCell,
+    StoreLayout Layout,
     float TitlePhase);
 
 // The screen-space overlay: the objective readout, the alarm meter, the
@@ -44,13 +46,71 @@ public sealed class Hud
     private readonly MessageFeed _feed;
     private SpriteFont? _font;
 
+    // The minimap. The store is bigger than the screen, so the player needs
+    // a way to see the whole floor plan at once — otherwise the scrolling
+    // camera turns a heist into an exploration.
+    private readonly Texture2D _minimap;
+    private readonly int _minimapCellPixels;
+
     /// <summary>Creates a new HUD with the given graphics resources.</summary>
-    public Hud(SpriteBatch spriteBatch, GraphicsDevice graphicsDevice, Texture2D uiPixel)
+    /// <param name="spriteBatch">The batch to draw with.</param>
+    /// <param name="graphicsDevice">The device, for the viewport and the minimap.</param>
+    /// <param name="uiPixel">A 1x1 white texture, for solid rectangles.</param>
+    /// <param name="layout">The floor plan to draw the minimap from.</param>
+    public Hud(SpriteBatch spriteBatch, GraphicsDevice graphicsDevice, Texture2D uiPixel, StoreLayout layout)
     {
         _spriteBatch = spriteBatch;
         _graphicsDevice = graphicsDevice;
         _uiPixel = uiPixel;
         _feed = new MessageFeed(EventSystem.Instance);
+        (_minimap, _minimapCellPixels) = BuildMinimap(graphicsDevice, layout);
+    }
+
+    /// <summary>
+    /// Builds the minimap texture: one pixel per cell, scaled up when drawn.
+    ///
+    /// Baking it once means the map is not re-rendered every frame, and a
+    /// one-pixel-per-cell texture scaled up with nearest-neighbour filtering
+    /// is exactly the crisp little plan a minimap wants to be.
+    /// </summary>
+    private static (Texture2D, int) BuildMinimap(GraphicsDevice device, StoreLayout layout)
+    {
+        var texture = new Texture2D(device, layout.Width, layout.Height);
+        texture.SetData(MinimapPixels(layout));
+
+        // Big enough to read the aisles at a glance, small enough to sit in a
+        // corner. Four pixels a cell is about the floor of what is legible.
+        const int cellPixels = 4;
+        return (texture, cellPixels);
+    }
+
+    /// <summary>
+    /// The minimap's pixels: one per cell of the floor plan.
+    ///
+    /// Split out from the texture upload so it can be checked without a
+    /// graphics device. The plan is a pure function of the layout, and
+    /// getting it wrong would mean a minimap that lies about where the
+    /// shelves are.
+    /// </summary>
+    /// <param name="layout">The floor plan to draw.</param>
+    /// <returns>The pixels, row by row, top row first.</returns>
+    public static Color[] MinimapPixels(StoreLayout layout)
+    {
+        var pixels = new Color[layout.Width * layout.Height];
+
+        for (int y = 0; y < layout.Height; y++)
+        {
+            for (int x = 0; x < layout.Width; x++)
+            {
+                Color c;
+                if (layout.IsCounter(x, y)) c = new Color(226, 176, 64);   // the till
+                else if (StoreLayout.IsBlocked(layout.Rows[y][x])) c = new Color(52, 54, 64); // shelves
+                else c = new Color(24, 26, 34);                              // floor
+                pixels[y * layout.Width + x] = c;
+            }
+        }
+
+        return pixels;
     }
 
     /// <summary>
@@ -67,24 +127,32 @@ public sealed class Hud
     /// <summary>Ages the message feed. Called once per frame from Game1's update loop.</summary>
     public void Update(float dt) => _feed.Update(dt);
 
+    /// <summary>Releases the HUD's own graphics resources.</summary>
+    public void Dispose() => _minimap.Dispose();
+
     /// <summary>
     /// Draws the full HUD overlay: rainbow title, objective panel, alarm meter,
     /// control hint, thief marker, end banner, and the message feed.
     /// </summary>
     public void Draw(in HudState state)
     {
-        // SpriteBatch draws are 2D-over-3D, fine as a screen-space overlay.
-        _spriteBatch.Begin();
-
         // The font comes from the content pipeline and could in principle
         // fail to load; without it there's no text HUD, but the 3D scene
         // and the alarm bar still draw.
         if (_font == null)
         {
-            _spriteBatch.End();
             _graphicsDevice.DepthStencilState = DepthStencilState.Default;
             return;
         }
+
+        // The minimap is drawn in its own pass. A one-pixel-per-cell texture
+        // scaled up needs nearest-neighbour filtering to stay crisp, and the
+        // sampler state is applied when a batch begins, so it cannot be
+        // changed partway through one.
+        DrawMinimap(state);
+
+        // SpriteBatch draws are 2D-over-3D, fine as a screen-space overlay.
+        _spriteBatch.Begin();
 
         DrawRainbowTitle(state);
         DrawObjectivePanel(state);
@@ -94,8 +162,9 @@ public sealed class Hud
         DrawEndBanner(state);
 
         // The event feed: newest at the bottom, older ones scroll up and off.
+        // It sits below the minimap so the two do not overlap.
         _feed.Draw(_spriteBatch, _font,
-            new Vector2(_graphicsDevice.Viewport.Width - 220, 40));
+            new Vector2(_graphicsDevice.Viewport.Width - 220, 40 + state.Layout.Height * _minimapCellPixels + 20));
 
         _spriteBatch.End();
 
@@ -188,6 +257,65 @@ public sealed class Hud
         LootKind.Boxed => "cartons",
         _ => "bags",
     };
+
+    /// <summary>
+    /// The minimap: the whole floor plan, with the player and the cats on it.
+    ///
+    /// The store is bigger than the screen, so the camera can only ever show
+    /// a slice of it. The minimap is how the player knows where they are in
+    /// the whole plan, which is the difference between a heist and a
+    /// treasure hunt.
+    ///
+    /// It sits in the top-right corner, under the message feed.
+    /// </summary>
+    private void DrawMinimap(in HudState state)
+    {
+        var layout = state.Layout;
+        int cell = _minimapCellPixels;
+        int width = layout.Width * cell;
+        int height = layout.Height * cell;
+
+        int x = _graphicsDevice.Viewport.Width - width - 16;
+        int y = 40;
+
+        // Its own batch, so the nearest-neighbour sampling applies to the
+        // scaled-up plan. The sampler state is bound when a batch begins.
+        var previous = _graphicsDevice.SamplerStates[0];
+        _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend,
+            SamplerState.PointClamp, null, null, null, null);
+
+        // The plan itself.
+        _spriteBatch.Draw(_minimap, new Rectangle(x, y, width, height), Color.White);
+
+        // The player: a bright dot, so it is never lost against the shelves.
+        var player = new Rectangle(
+            x + state.PlayerCell.X * cell + cell / 4,
+            y + state.PlayerCell.Y * cell + cell / 4,
+            Math.Max(2, cell / 2), Math.Max(2, cell / 2));
+        _spriteBatch.Draw(_uiPixel, player, new Color(120, 220, 255));
+
+        // The cats, in their own colour. A cat carrying something is drawn
+        // brighter, because that is the one the player cares about.
+        foreach (var critter in state.Critters)
+        {
+            var c = critter.Profile.Tint;
+            if (critter.Carrying) c = Color.Lerp(c, Color.White, 0.55f);
+
+            _spriteBatch.Draw(_uiPixel, new Rectangle(
+                x + critter.Cell.X * cell,
+                y + critter.Cell.Y * cell,
+                cell, cell), c);
+        }
+
+        // A frame, so the map reads as a panel rather than floating.
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x - 2, y - 2, width + 4, 2), new Color(70, 72, 82));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x - 2, y + height, width + 4, 2), new Color(70, 72, 82));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x - 2, y - 2, 2, height + 4), new Color(70, 72, 82));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x + width, y - 2, 2, height + 4), new Color(70, 72, 82));
+
+        _spriteBatch.End();
+        _graphicsDevice.SamplerStates[0] = previous;
+    }
 
     // The alarm: a bar that fills as the meter rises, tinted by cause so
     // you can tell at a glance whether the cat or you are the problem.

@@ -50,7 +50,7 @@ public static class Program
             return 0;
         }
 
-        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); LootChecks.Run(); AwarenessChecks.Run(); }
+        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); LootChecks.Run(); AwarenessChecks.Run(); MinimapChecks.Run(); }
         if (!anyFlag || onlyRig) RunRigs();
         if (!anyFlag || onlyRounds) RunRounds();
 

@@ -298,7 +298,7 @@ namespace StoreChase
             var spriteBatch = new SpriteBatch(GraphicsDevice);
             var uiPixel = new Texture2D(GraphicsDevice, 1, 1);
             uiPixel.SetData(new[] { Color.White });
-            _hud = new Hud(spriteBatch, GraphicsDevice, uiPixel);
+            _hud = new Hud(spriteBatch, GraphicsDevice, uiPixel, _map.Layout);
 
             LoadCatModel();
             _propVerts = CubeMesh.Build(Color.White, 1f, 1f);
@@ -879,6 +879,8 @@ namespace StoreChase
             DrawCritters(gameTime);
             _hud.Draw(BuildHudState());
 
+            MaybeCapture();
+
             base.Draw(gameTime);
         }
 
@@ -1196,12 +1198,112 @@ namespace StoreChase
             ViewProjection: _camera.ViewProjection,
             Critters: _critters,
             Loot: _items.Items,
+            PlayerCell: _player.Cell,
+            Layout: _map.Layout,
             TitlePhase: _title.Phase);
+
+        // TEMPORARY capture hook — dumps the backbuffer to a PNG so the
+        // rendering can be inspected on a machine with no visible display.
+        private int _captureFrames;
+        private void MaybeCapture()
+        {
+            string path = Environment.GetEnvironmentVariable("SC_CAPTURE");
+            if (string.IsNullOrEmpty(path)) return;
+            if (++_captureFrames != 120) return;
+
+            try
+            {
+                int w = GraphicsDevice.Viewport.Width;
+                int h = GraphicsDevice.Viewport.Height;
+                var pixels = new Color[w * h];
+                GraphicsDevice.GetBackBufferData(pixels);
+                WritePng(path, w, h, pixels);
+                Console.WriteLine($"[capture] wrote {path} ({w}x{h})");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[capture] failed: {ex.Message}");
+            }
+        }
+
+
+        // A minimal PNG writer, so the capture does not need an image library.
+        private static void WritePng(string path, int w, int h, Color[] pixels)
+        {
+            using var ms = new System.IO.MemoryStream();
+            ms.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, 0, 8);
+
+            var ihdr = new byte[13];
+            WriteBigEndian(ihdr, 0, w);
+            WriteBigEndian(ihdr, 4, h);
+            ihdr[8] = 8;   // bit depth
+            ihdr[9] = 2;   // colour type: truecolour
+            WriteChunk(ms, "IHDR", ihdr);
+
+            // Raw scanlines, each prefixed with a filter byte.
+            var raw = new byte[h * (1 + w * 3)];
+            int o = 0;
+            for (int y = 0; y < h; y++)
+            {
+                raw[o++] = 0;
+                for (int x = 0; x < w; x++)
+                {
+                    var c = pixels[y * w + x];
+                    raw[o++] = c.B;
+                    raw[o++] = c.G;
+                    raw[o++] = c.R;
+                }
+            }
+
+            using var compressed = new System.IO.MemoryStream();
+            using (var z = new System.IO.Compression.ZLibStream(compressed, System.IO.Compression.CompressionLevel.Optimal, true))
+                z.Write(raw, 0, raw.Length);
+            WriteChunk(ms, "IDAT", compressed.ToArray());
+            WriteChunk(ms, "IEND", Array.Empty<byte>());
+
+            System.IO.File.WriteAllBytes(path, ms.ToArray());
+        }
+
+        private static void WriteBigEndian(byte[] b, int offset, int value)
+        {
+            b[offset] = (byte)(value >> 24);
+            b[offset + 1] = (byte)(value >> 16);
+            b[offset + 2] = (byte)(value >> 8);
+            b[offset + 3] = (byte)value;
+        }
+
+        private static void WriteChunk(System.IO.Stream s, string type, byte[] data)
+        {
+            var len = new byte[4];
+            WriteBigEndian(len, 0, data.Length);
+            s.Write(len, 0, 4);
+
+            var typeBytes = System.Text.Encoding.ASCII.GetBytes(type);
+            s.Write(typeBytes, 0, 4);
+            s.Write(data, 0, data.Length);
+
+            var crc = new byte[4];
+            WriteBigEndian(crc, 0, (int)Crc32(typeBytes, data));
+            s.Write(crc, 0, 4);
+        }
+
+        private static uint Crc32(byte[] a, byte[] b)
+        {
+            uint crc = 0xFFFFFFFFu;
+            foreach (var value in a.Concat(b))
+            {
+                crc ^= value;
+                for (int i = 0; i < 8; i++)
+                    crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+            }
+            return crc ^ 0xFFFFFFFFu;
+        }
 
         protected override void UnloadContent()
         {
             _title?.Dispose();
             _textures?.Dispose();
+            _hud?.Dispose();
             base.UnloadContent();
         }
     }
