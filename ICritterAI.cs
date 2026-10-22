@@ -112,7 +112,10 @@ public record struct CritterContext(
     /// A friend is neither a thief nor prey: it never steals, and it
     /// shadows the player around the store instead.
     /// </summary>
-    bool Befriended = false
+    bool Befriended = false,
+
+    /// <summary>This cat's current mood.</summary>
+    Mood Mood = Mood.Calm
 );
 
 /// <summary>

@@ -93,10 +93,9 @@ public class SmartAnimalAI : ICritterAI
 
         int dist = ManhattanDistance(context.CurrentCell, context.PlayerCell);
 
-        // A friend is never a threatened animal: being looked at or seen is
-        // company, not danger, so it must not pose (or act) as if fleeing.
+        // A friend is never a threatened animal...
         bool threatened = context.CanSeePlayer && !context.Befriended &&
-                          dist <= _profile.FleeRadius;
+                          dist <= (_profile.FleeRadius + (context.Mood == Mood.Wary ? 2 : 0));
 
         GridPos? result = Decide(context, dist, threatened);
 
@@ -249,6 +248,9 @@ public class SmartAnimalAI : ICritterAI
         // is the whole point of feeding it: one fewer thief in the store,
         // for the price of two treats.
         if (context.Befriended) return false;
+
+        // A wary cat (just caught) won't shoplift — it's spooked.
+        if (context.Mood == Mood.Wary) return false;
 
         // A panicking cat (sprayed) is running, not shopping.
         if (context.Panic > 0f) return false;

@@ -98,7 +98,11 @@ public class ItemField
         }
     }
 
-    /// <summary>Resets all items to the Loose state (used on round restart).</summary>
+    /// <summary>Adds a single loose item at a cell (incidents, not a full spawn).</summary>
+    public void AddLoose(LootKind kind, GridPos cell)
+    {
+        _items.Add(new LootItem(kind, cell, CellCenter(cell)));
+    }
     public void Reset()
     {
         foreach (var item in _items)

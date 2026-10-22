@@ -16,6 +16,12 @@ public enum ShiftEventKind
 
     /// <summary>A rat runs the aisles: every cat chases it.</summary>
     Rat,
+
+    /// <summary>A bottle breaks: a spill appears mid-aisle.</summary>
+    BottleBreak,
+
+    /// <summary>A customer drops their basket: free goods on the floor.</summary>
+    CustomerDrop,
 }
 
 /// <summary>
@@ -69,7 +75,7 @@ public sealed class ShiftEventSystem
         _timer -= dt;
         if (_timer > 0f) return null;
 
-        var kind = (ShiftEventKind)_rng.Next(4);
+        var kind = (ShiftEventKind)_rng.Next(Enum.GetValues<ShiftEventKind>().Length);
         _timer = _rng.NextSingle() * (IntervalMax - IntervalMin) + IntervalMin;
         return kind;
     }

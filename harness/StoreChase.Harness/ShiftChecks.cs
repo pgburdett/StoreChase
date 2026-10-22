@@ -57,7 +57,7 @@ public static class ShiftChecks
             if (fired.HasValue) kinds.Add(fired.Value);
         }
         Check.That("every event kind is reachable",
-            kinds.Count == 4, $"saw {kinds.Count}/4");
+            kinds.Count == Enum.GetValues<ShiftEventKind>().Length, $"saw {kinds.Count}/{Enum.GetValues<ShiftEventKind>().Length}");
 
         // And it keeps a steady rhythm: at 12–22s apart, 600s holds between
         // 27 and 51 events.

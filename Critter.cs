@@ -86,6 +86,12 @@ public class Critter
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
+    /// <summary>This cat's current mood.</summary>
+    public Mood Mood { get; set; } = Mood.Calm;
+
+    /// <summary>Seconds left on the current mood before it fades to calm.</summary>
+    public float MoodTimer { get; set; }
+
     /// <summary>This cat's name (for the HUD roster and the feed).</summary>
     public string Name { get; set; } = "";
 
@@ -132,6 +138,8 @@ public class Critter
     public bool Feed()
     {
         Friendship++;
+        Mood = Mood.Calm;
+        MoodTimer = 0f;
         return Friendship == FriendThreshold;
     }
 
@@ -222,6 +230,7 @@ public class Critter
         // Reactions age whether or not the cat is otherwise busy.
         if (_startleTimer > 0f) _startleTimer -= dt;
         if (_panicTimer > 0f) _panicTimer -= dt;
+        if (MoodTimer > 0f) { MoodTimer -= dt; if (MoodTimer <= 0f) Mood = Mood.Calm; }
 
         // Stunned: tick down and sit out the frame. No movement, no decisions,
         // no stealing — but the cat is still in the game and still drawn.
@@ -323,7 +332,8 @@ public class Critter
         LastSeenPlayerCell: LastSeenPlayerCell,
         Treat: locus.Treat,
         Panic: _panicTimer,
-        Befriended: Befriended);
+        Befriended: Befriended,
+        Mood: Mood);
 
     /// <summary>Marks the critter as tackled. The game handles the drop and removal.</summary>
     public void Tackle() => Tackled = true;

@@ -35,7 +35,7 @@ namespace StoreChase
         // turn up changes the round. Tackled critters are retired (Tackle sets
         // the flag) and removed from the list.
         private readonly List<Critter> _critters = new();
-        private readonly Random _rng = new();
+        private Random _rng = new();
 
         // What the cats know about the player, shared between them. One cat
         // spotting the player has to matter to the others, or each cat is an
@@ -52,6 +52,7 @@ namespace StoreChase
 
         // The securing combo: consecutive secures within a short window
         // multiply the coin payout.
+        private Difficulty _difficulty = Difficulty.Normal;
         private FriendRoster _roster = null!;
 
         // Security cameras watching the aisles.
@@ -255,6 +256,22 @@ namespace StoreChase
             _graphics = new GraphicsDeviceManager(this);
             Content.RootDirectory = "Content";
             IsMouseVisible = true;
+
+            var diff = Environment.GetEnvironmentVariable("SC_DIFF");
+            if (diff != null)
+                _difficulty = diff.ToLowerInvariant() switch
+                {
+                    "easy" => Difficulty.Easy,
+                    "hard" => Difficulty.Hard,
+                    _ => Difficulty.Normal,
+                };
+
+            if (Environment.GetEnvironmentVariable("SC_DAILY") != null)
+            {
+                int seed = (int)(DateTime.UtcNow.Date.Ticks & 0x7FFFFFFF);
+                _rng = new Random(seed);
+                _difficulty = Difficulty.Hard;
+            }
         }
 
         protected override void Initialize()
@@ -448,7 +465,8 @@ namespace StoreChase
             _catAnims.Clear();
             _catMeshes.Clear();
             _roster ??= new FriendRoster(_rng);
-            foreach (var cell in SpawnPoints(spec.CritterCount))
+            int critterCount = Math.Max(1, spec.CritterCount + (_difficulty == Difficulty.Hard ? 1 : _difficulty == Difficulty.Easy ? -1 : 0));
+            foreach (var cell in SpawnPoints(critterCount))
             {
                 var profile = CritterProfile.Random(_rng);
                 var ai = new SmartAnimalAI(profile, _rng);
@@ -548,6 +566,7 @@ namespace StoreChase
             // the round can be cleared. Scaling by the store's size keeps the
             // same amount of alarm budget in a round either way.
             _alarm.RateScale = _map.Layout.AlarmScale(spec.LootCount, Player.GridSpeed);
+            _alarm.RateScale *= _difficulty == Difficulty.Hard ? 1.2f : _difficulty == Difficulty.Easy ? 0.8f : 1f;
             _alarmRateScaleBase = _alarm.RateScale;
 
             // And the Calm nerves upgrade, if bought: decay only — the rise
@@ -1025,6 +1044,8 @@ namespace StoreChase
                     {
                         _items.DropFrom(critter, critter.Cell);
                         critter.Carrying = false;
+                        critter.Mood = Mood.Wary;
+                        critter.MoodTimer = 10f;
                         Sfx.Play(SfxId.Drop, volume: 0.5f);
                         _alarm.Ping();
                     }
@@ -1105,6 +1126,8 @@ namespace StoreChase
                     {
                         _items.DropFrom(critter, critter.Cell);
                         critter.Carrying = false;
+                        critter.Mood = Mood.Wary;
+                        critter.MoodTimer = 10f;
                         _alarm.Ping();
                     }
                     Sfx.Play(SfxId.Tackle, volume: 0.5f);
@@ -1501,6 +1524,8 @@ namespace StoreChase
 
             _items.TakeByCritter(item, critter);
             _roundHadTheft = true;
+            critter.Mood = Mood.Bold;
+            critter.MoodTimer = 15f;
             _alarm.Ping();
             Sfx.Play(SfxId.Steal, volume: 0.5f);
             EventSystem.Instance.Publish(new ItemStolenEvent(critter.Profile.Name));
@@ -1585,6 +1610,34 @@ namespace StoreChase
                     _fx.Burst(new Vector3(_ratCell.X * CellSize, 0.4f, _ratCell.Y * CellSize),
                         new Color(100, 90, 80), count: 12, speed: 2.5f, life: 1.2f, _rng);
                     _fx.Text(overhead, "Rat!", new Color(220, 140, 120), 1.4f);
+                    break;
+
+                case ShiftEventKind.BottleBreak:
+                    {
+                        var cells = _map.WalkableCells().ToList();
+                        if (cells.Count > 0)
+                        {
+                            var spill = cells[_rng.Next(cells.Count)];
+                            _hazards.AddSpill(spill);
+                            _fx.Burst(new Vector3(spill.X * CellSize, 0.3f, spill.Y * CellSize),
+                                new Color(120, 180, 220), count: 10, speed: 2f, life: 0.9f, _rng);
+                        }
+                        _fx.Text(overhead, "Bottle broke - spill!", new Color(140, 190, 230), 1.4f);
+                    }
+                    break;
+
+                case ShiftEventKind.CustomerDrop:
+                    {
+                        var cells = _map.ShelfEdgeCells().ToList();
+                        if (cells.Count > 0)
+                        {
+                            var cell = cells[_rng.Next(cells.Count)];
+                            _items.AddLoose(LootKind.Boxed, cell);
+                            _fx.Burst(new Vector3(cell.X * CellSize, 0.6f, cell.Y * CellSize),
+                                new Color(235, 200, 130), count: 8, speed: 2f, life: 0.8f, _rng);
+                        }
+                        _fx.Text(overhead, "Dropped basket - free goods!", new Color(245, 210, 140), 1.4f);
+                    }
                     break;
             }
         }
