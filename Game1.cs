@@ -48,6 +48,17 @@ namespace StoreChase
         // into the same vagueness a shouted warning carries.
         private readonly NoiseSystem _noise = new();
 
+        // The securing combo: consecutive secures within a short window
+        // multiply the coin payout.
+        private readonly ComboSystem _combo = new(ComboSystem.DefaultWindow);
+
+        // Security cameras watching the aisles.
+        private CameraField _cameras = null!;
+
+        private bool _roundHadTheft;
+        private bool _roundAlarmCritical;
+        private float _alarmRateScaleBase;
+
         // The objective: loot, the alarm that fills while it's missing, and the
         // ball you can throw to move a cat off whatever it's doing.
         private ItemField _items = null!;
@@ -70,6 +81,9 @@ namespace StoreChase
         private float _darkTimer;
         private float _ratTimer;
         private GridPos _ratCell;
+        private float _dayPhase;
+        private float _rainTimer;
+        private float _rainActive;
 
         // Floor spills and the one-shot fire alarm, plus where the player was
         // last frame (a spill triggers on *entering* its cell, not every
@@ -194,6 +208,9 @@ namespace StoreChase
         // watching you: a fixed fraction of the meter, same reasoning as the
         // counter-drop spike (an event, not a rate, so not scaled).
         public const float FireAlarmSpike = 0.15f;
+
+        // Coins banked for a flawless round: nothing stolen, alarm never critical.
+        public const int CleanRoundBonus = 25;
 
         // How long a spill keeps the player sliding. Skates double it —
         // water and roller skates is a comedy combination, and the boost
@@ -354,12 +371,16 @@ namespace StoreChase
         /// </summary>
         private void OnItemSecured(LootItem item)
         {
-            int coins = CampaignState.CoinsFor(item);
+            int mult = _combo.RegisterSecure(_elapsedTime);
+            int coins = CampaignState.CoinsFor(item) * mult;
             _campaign.AddCoins(coins);
 
             // The purse line: gold, rising off the item where it landed.
             _fx.Text(item.WorldPos + new Vector3(0f, 1.8f, 0f),
-                $"+{coins}c", new Color(245, 205, 110), 1.5f);
+                mult > 1 ? $"+{coins}c  x{mult}!" : $"+{coins}c",
+                new Color(245, 205, 110), 1.5f);
+            if (mult > 1) _fx.Burst(item.WorldPos + new Vector3(0f, 1.2f, 0f),
+                new Color(255, 230, 120), count: 12, speed: 2.5f, life: 0.9f, _rng);
         }
 
         // Spawns the player, a cast of cats, the merchandise and the alarm.
@@ -438,9 +459,32 @@ namespace StoreChase
             _noise.Clear();
             _darkTimer = 0f;
             _ratTimer = 0f;
+            _dayPhase = 0f;
+            _rainTimer = 40f + (float)_rng.NextDouble() * 30f;
+            _rainActive = 0f;
             _shift ??= new ShiftEventSystem(_rng);
             _shift.StartRound();
+            _combo.Reset();
+            _roundHadTheft = false;
+            _roundAlarmCritical = false;
             _hitStop = 0f;
+
+            // Security cameras: a couple of wall-mounted lenses watching the
+            // aisles. A carrying cat in a beam is noticed (alarm rises faster);
+            // a thrown ball that lands on one disables it for a few seconds.
+            _cameras = new CameraField();
+            foreach (var cell in _map.WalkableCells())
+            {
+                if (cell.X == 0 || cell.Y == 0 || cell.X == _map.Width - 1 || cell.Y == _map.Height - 1)
+                {
+                    // Face inward: border cell on left edge faces right, etc.
+                    int dir = cell.X == 0 ? 0 : cell.X == _map.Width - 1 ? 2
+                            : cell.Y == 0 ? 1 : 3;
+                    // Only mount a few, deterministically.
+                    if ((cell.X + cell.Y) % 7 == 0)
+                        _cameras.Add(new SecurityCamera(cell, dir));
+                }
+            }
 
             // Shoppers: a few bodies in the aisles, one of whom is a shoplifter
             // (the first spawn). Exits are the walkable border cells; if the
@@ -485,6 +529,7 @@ namespace StoreChase
             // the round can be cleared. Scaling by the store's size keeps the
             // same amount of alarm budget in a round either way.
             _alarm.RateScale = _map.Layout.AlarmScale(spec.LootCount, Player.GridSpeed);
+            _alarmRateScaleBase = _alarm.RateScale;
 
             // And the Calm nerves upgrade, if bought: decay only — the rise
             // rates are the simulation's, not the shop's to edit.
@@ -875,6 +920,31 @@ namespace StoreChase
             if (_treatTimer > 0f) _treatTimer -= dt;
             if (_darkTimer > 0f) _darkTimer -= dt;
             if (_ratTimer > 0f) _ratTimer -= dt;
+
+            // Day/night cycle: a slow loop that nudges the ambient light.
+            _dayPhase = (_dayPhase + dt / 120f) % 1f;
+            // Weather: an occasional rainstorm that slicks the floor.
+            if (_rainActive > 0f)
+            {
+                _rainActive -= dt;
+                if (_rng.NextDouble() < dt * 0.4)
+                {
+                    var cells = _map.WalkableCells().ToList();
+                    if (cells.Count > 0)
+                        _hazards.AddSpill(cells[_rng.Next(cells.Count)]);
+                }
+            }
+            else
+            {
+                _rainTimer -= dt;
+                if (_rainTimer <= 0f)
+                {
+                    _rainActive = 8f;
+                    _rainTimer = 40f + (float)_rng.NextDouble() * 30f;
+                    _fx.Text(_player.WorldPos + new Vector3(0f, 2.2f, 0f),
+                        "Rain!", new Color(140, 170, 210), 1.4f);
+                }
+            }
             // Skates multiply with the Fast shoes upgrade: the shop's boost
             // is a factor of whatever baseline the campaign has bought.
             _player.SpeedMultiplier = (_skateTimer > 0f ? SkatesSpeedBoost : 1f)
@@ -891,6 +961,12 @@ namespace StoreChase
 
             _ball.Update(dt, _map, _player.Cell);
             _ballCell = _ball.Active ? _ball.Cell : null;
+
+            // A ball resting on a camera takes it out for a few seconds.
+            if (_ballCell.HasValue && _ball.State != BallState.Thrown)
+                _cameras.DisableAt(_ballCell.Value, 8f);
+
+            _cameras.Update(dt);
 
             // A bounce is the ball announcing itself, which is the whole point
             // of throwing it: the cats hear it.
@@ -954,6 +1030,7 @@ namespace StoreChase
                     {
                         _items.TakeByCustomer(item, customer);
                         customer.Carrying = item;
+                        _roundHadTheft = true;
                         _fx.Text(customer.WorldPos + new Vector3(0f, 1.5f, 0f),
                             "pocketed...", new Color(230, 170, 90), 1.1f);
                     }
@@ -988,7 +1065,10 @@ namespace StoreChase
             UpdateHeartbeat(dt);
             _hud.Update(dt);
 
+            bool covered = _critters.Any(c => c.Carrying && _cameras.IsCovered(_map, c.Cell));
+            _alarm.RateScale = _alarmRateScaleBase * (covered ? 1.3f : 1f);
             _alarm.Update(dt, _items.StolenWeight, _items.Held != null, _items.AllSecured);
+            if (_alarm.Stage == AlarmStage.Critical) _roundAlarmCritical = true;
             UpdateAlarmAudio(dt);
 
             if (_alarm.Tripped)
@@ -1351,6 +1431,7 @@ namespace StoreChase
             if (item == null) return false;
 
             _items.TakeByCritter(item, critter);
+            _roundHadTheft = true;
             _alarm.Ping();
             Sfx.Play(SfxId.Steal, volume: 0.5f);
             EventSystem.Instance.Publish(new ItemStolenEvent(critter.Profile.Name));
@@ -1521,6 +1602,12 @@ namespace StoreChase
             if (phase == RunPhase.Won)
             {
                 _campaign.AddCoins(CampaignState.WinBonus);
+                if (!_roundHadTheft && !_roundAlarmCritical)
+                {
+                    _campaign.AddCoins(CleanRoundBonus);
+                    _fx.Text(_player.WorldPos + new Vector3(0f, 2.4f, 0f),
+                        "Clean store! +25c", new Color(180, 230, 180), 1.6f);
+                }
                 _campaign.RecordWin();
             }
             else
@@ -1587,7 +1674,10 @@ namespace StoreChase
             // it affects every surface in the room at once.
             // A power cut darkens the whole store on top of the alarm tint.
             float light = _darkTimer > 0f ? DarkLightFactor : 1f;
-            _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light;
+            // Day/night: a slow brightness pulse, dimmer at "night".
+            float day = 0.85f + 0.15f * MathF.Sin(_dayPhase * MathF.Tau);
+            if (_rainActive > 0f) day *= 0.9f;
+            _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light * day;
             _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
             DrawMesh(_floorVerts, FloorWorld, _textures.Floor);
 
@@ -2059,6 +2149,7 @@ namespace StoreChase
             // Normalised: 0 = silent, 1 = as loud as the store gets (a skid
             // while skating). Only the HUD reads this scale.
             Noise: Math.Clamp(_noise.CurrentLoudness / NoiseHudScale, 0f, 1f),
+            Combo: _combo.Combo,
             BoostSecondsLeft: _skateTimer,
             Popups: _fx.Texts,
             Coins: _campaign.Coins,

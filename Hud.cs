@@ -56,7 +56,10 @@ public readonly record struct HudState(
     /// the store gets). Normalised by Game1 before it gets here; the HUD only
     /// draws the pip.
     /// </summary>
-    float Noise);
+    float Noise,
+
+    /// <summary>Current securing combo (1 = none). Only drawn while playing.</summary>
+    int Combo);
 
 // The screen-space overlay: the objective readout, the alarm meter, the
 // control hint, the off-screen thief marker and the end-of-round banner.

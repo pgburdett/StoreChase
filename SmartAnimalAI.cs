@@ -35,6 +35,7 @@ public class SmartAnimalAI : ICritterAI
     private List<GridPos> _currentPath = new();
     private float _replanTimer;
     private GridPos? _lastCell;
+    private GridPos? _patrolTarget;
 
     // Seconds left of "I have just noticed you" panic, which is what gates the
     // Startle pose.
@@ -163,6 +164,19 @@ public class SmartAnimalAI : ICritterAI
 
             _currentPath.Clear();
             return PathStepToward(context.Map, context.CurrentCell, treat);
+        }
+
+        // 5b. Calm patrol: a cat with no idea where the player is walks a lazy
+        // route between shelf blocks instead of standing still or wandering at
+        // random, so the early game reads as a store with regulars in it.
+        if (!context.Carrying && !context.Befriended && context.Ball == null
+            && context.Treat == null && context.PlayerAwareness <= 0f
+            && !context.CanSeePlayer && context.LastSeenPlayerCell == null)
+        {
+            if (!_patrolTarget.HasValue || _patrolTarget.Value == context.CurrentCell)
+                _patrolTarget = PickPatrolTarget(context.Map, context.CurrentCell, _rng);
+            _currentPath.Clear();
+            return PathStepToward(context.Map, context.CurrentCell, _patrolTarget.Value);
         }
 
         // 5. Befriended. A fed cat is neither thief nor prey: it shadows the
@@ -426,6 +440,21 @@ public class SmartAnimalAI : ICritterAI
     // Aimless ambling, with a mild bias toward shelf edges. That's where the
     // merchandise is, so a wandering thief tends to find some — which keeps the
     // heist going without every cat pathing to the loot from across the store.
+    /// <summary>Picks a walkable cell a few aisles away to amble toward.</summary>
+    private static GridPos PickPatrolTarget(GridMap map, GridPos from, Random rng)
+    {
+        var cells = map.WalkableCells().ToList();
+        if (cells.Count == 0) return from;
+        // Prefer cells at least 3 away so the cat actually moves.
+        for (int tries = 0; tries < 8; tries++)
+        {
+            var c = cells[rng.Next(cells.Count)];
+            if (Math.Abs(c.X - from.X) + Math.Abs(c.Y - from.Y) >= 3)
+                return c;
+        }
+        return cells[rng.Next(cells.Count)];
+    }
+
     private GridPos? Wander(CritterContext context)
     {
         foreach (var d in ShuffledDirections())

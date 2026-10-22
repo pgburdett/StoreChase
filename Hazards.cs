@@ -75,6 +75,12 @@ public sealed class HazardField
         if (wallCells.Count > 0) FireAlarmCell = wallCells[0];
     }
 
+    /// <summary>Adds a single spill without clearing existing ones (weather).</summary>
+    public void AddSpill(GridPos cell)
+    {
+        if (!_spills.Contains(cell)) _spills.Add(cell);
+    }
+
     /// <summary>True if the cell has a spill on it.</summary>
     public bool IsSpill(GridPos cell) => _spills.Contains(cell);
 
