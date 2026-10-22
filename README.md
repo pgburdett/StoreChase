@@ -319,15 +319,29 @@ playerWorldPos, playerFacing)`.
 
 ### Isometric (default)
 
-- Pan (`_panOffset`, world units) is clamped to `mapSize * 0.75` so you can't
-  drift far from the store. Pan speed scales with zoom.
-- Zoom is expressed as camera *distance* in both modes, so it feels continuous
-  across the tilt transition. Zoom 1.0 is standard; smaller = closer,
-  larger = farther. Clamped `MinZoom` 0.25 to `MaxZoom` 2.5.
+- **The camera follows the player.** The viewport is a fixed window of
+  `Camera.ViewCellsWide` (16) cells across at zoom 1, scaled by zoom, and the
+  look-at point is the player plus any manual panning. That is what makes the
+  store scroll: a store bigger than the viewport is a window onto a floor
+  plan, not a diorama that zooms itself out to fit.
+- The look-at point is clamped so the viewport never leaves the floor plan
+  (`Camera.ClampToMap`). The player can walk right up to a wall, and a view
+  centred there would show half the screen full of nothing outside the store.
+  When the store is smaller than the viewport — a small map at maximum
+  zoom-out — the view is pinned to the middle of the store instead.
+- Pan (`_panOffset`, world units) is an *offset from the player*, not an
+  absolute camera position, so it can't drift the view away from them
+  entirely. It is clamped to `mapSize * 0.5`. Pan speed scales with zoom.
+- Zoom scales the viewport size in both modes, so it feels continuous across
+  the tilt transition. Zoom 1.0 is standard; smaller = closer, larger =
+  farther. Clamped `MinZoom` 0.25 to `MaxZoom` 2.5.
 - Tilt goes 0 → `MaxTiltDegrees` (80). At tilt ≈ 0 the camera sits directly
   above the look-at point and uses `Matrix.CreateOrthographic` (no perspective
   distortion). Once tilted at all it swings back along +Z, pivoting around
   the look-at point, and switches to `Matrix.CreatePerspectiveFieldOfView` (50°).
+  The camera distance is derived from the viewport height, so tilting keeps
+  roughly the same amount of store in frame and the view does not shrink and
+  grow as the player zooms.
 - The camera always uses world `Up`. A pure top-down view would make the look
   direction parallel to `Up` (and the up vector ambiguous), so `Camera` nudges
   its position by a tiny fraction of the camera distance along +Z. That keeps
@@ -383,8 +397,10 @@ in model space; see the orientation notes in `Game1.BuildCritterModelTransform`.
 All landmarks are fractions of the model's bounding box, so a re-exported or
 rescaled cat still works. Where they came from was measured, not guessed: the
 head is the dense cluster from Y=−22.3 back to about Y=−13 (the ears reach the
-top of the model at Z=38.6), the neck is around Y=−11, the tail is a thin
+top of the model at Z=37.6), the neck is around Y=−11, the tail is a thin
 isolated spike past Y≈17, the front paws sit at Y≈−12 and the rear at Y≈+8.
+(The model's up axis is +Z and its nose-to-tail axis is −Y, so "the top of the
+model" is a Z maximum and "the nose" is a Y minimum.)
 
 ### Why the amplitudes are small
 
