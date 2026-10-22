@@ -21,8 +21,7 @@ public static class CameraChecks
 {
     /// <summary>Runs every camera check.</summary>
     public static void Run()
-    {
-        Check.Section("Camera: scrolling and framing");
+    {        Check.Section("Camera: scrolling and framing");
 
         const float cellSize = 2f;
         const float aspect = 1600f / 1200f;

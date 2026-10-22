@@ -50,7 +50,7 @@ public static class Program
             return 0;
         }
 
-        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); }
+        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); LootChecks.Run(); AwarenessChecks.Run(); }
         if (!anyFlag || onlyRig) RunRigs();
         if (!anyFlag || onlyRounds) RunRounds();
 
@@ -145,15 +145,24 @@ public static class Program
             // threat. This is checked with a passive player who never
             // retrieves anything.
             int passiveLosses = 0;
+            int passiveWins = 0;
             var passiveTimes = new List<float>();
-            for (int seed = 1; seed <= 4; seed++)
+            for (int seed = 1; seed <= 8; seed++)
             {
-                var result = RoundSim.Play(layout, seed, seconds: 120f, playerIsPassive: true);
+                var result = RoundSim.Play(layout, seed, seconds: 180f, playerIsPassive: true);
                 if (result.Lost) passiveLosses++;
+                if (result.Won) passiveWins++;
                 passiveTimes.Add(result.Seconds);
             }
             Check.That($"'{layout.Name}': a loss is reachable (passive player)",
-                passiveLosses > 0, $"{passiveLosses}/4 passive rounds lost, avg {passiveTimes.Average():F1}s");
+                passiveLosses > 0, $"{passiveLosses}/8 passive rounds lost, avg {passiveTimes.Average():F1}s");
+
+            // A player who never moves must never win. If they do, something
+            // is securing goods without the player doing anything, which is
+            // the kind of bug that makes a round unwinnable in the other
+            // direction too.
+            Check.That($"'{layout.Name}': a passive player never wins",
+                passiveWins == 0, $"{passiveWins} passive wins");
 
             Check.Note($"{layout.Name}: {wins} wins / {losses} losses / {unresolved} unresolved, " +
                        $"avg {totalTime / rounds:F1}s per round");

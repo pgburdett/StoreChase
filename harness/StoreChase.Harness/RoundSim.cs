@@ -156,6 +156,9 @@ public static class RoundSim
         _botTarget = null;
         _botCarrying = false;
 
+        // What the cats know about the player, shared between them.
+        var awareness = new SharedAwareness();
+
         var player = new Player(layout.PlayerStart, CellSize);
         items.Spawn(Game1.LootCount, player.Cell);
         alarm.Reset();
@@ -196,14 +199,24 @@ public static class RoundSim
                 PlayerCell: player.Cell,
                 Ball: null,
                 LootTarget: items.NearestLoose(player.Cell)?.Cell,
+                LootTargetItem: items.NearestLoose(player.Cell),
                 StolenCount: items.StolenCount,
                 LootUnderfoot: c => items.LooseAt(c.Cell),
-                TrySteal: c => TrySteal(c, items, theftsBySpecies));
+                TrySteal: c => TrySteal(c, items, theftsBySpecies),
+                AlarmStage: alarm.Stage);
+
+            // What each cat can see, and then what the cats tell each other.
+            // This is the same order the game uses: sight first, then the
+            // news spreading, then everybody acting.
+            foreach (var critter in critters)
+                UpdateAwareness(critter, map, player);
+
+            awareness.Reset(critters);
+            awareness.Update(player.Cell, map);
 
             for (int i = critters.Count - 1; i >= 0; i--)
             {
                 var critter = critters[i];
-                UpdateAwareness(critter, map, player);
 
                 critter.Update(gameTime, locus);
 
@@ -240,7 +253,7 @@ public static class RoundSim
                 alarm.Ping();
 
             items.Update(dt, player.Cell, Game1.CarryHeight);
-            alarm.Update(dt, items.StolenCount, items.Held != null, items.AllSecured);
+            alarm.Update(dt, items.StolenWeight, items.Held != null, items.AllSecured);
 
             if (items.AllSecured) won = true;
             if (alarm.Tripped) lost = true;
@@ -299,7 +312,6 @@ public static class RoundSim
         // enough — the exact cone is checked separately by the camera tests.
         critter.BeingWatched = dist <= 3;
     }
-
     // The invariants. These are the promises the README makes about item
     // possession, expressed as checks that can't pass by accident.
     private static void CheckInvariants(ItemField items, HashSet<object> expected, List<string> violations)

@@ -3,8 +3,9 @@ using Microsoft.Xna.Framework;
 
 namespace StoreChase;
 
-// Which shelf the loot came from. Purely cosmetic — it picks the box colour and
-// a little bob offset so a heap of items is readable at a glance.
+// Which shelf the loot came from. Not purely cosmetic any more: each species
+// has a taste (see <see cref="CritterProfile.PreferredKind"/>), and the
+// value decides how much the alarm minds it being gone.
 public enum LootKind
 {
     /// <summary>A canned good — red box.</summary>
@@ -64,6 +65,21 @@ public sealed class LootItem
         Cell = cell;
         WorldPos = worldPos;
     }
+
+    /// <summary>
+    /// How much this item is worth, as a multiplier on the alarm's rise.
+    ///
+    /// The cheap stuff barely matters if it goes missing; the expensive
+    /// stuff is what the store actually cares about. This is what makes the
+    /// three kinds worth distinguishing beyond their colour.
+    /// </summary>
+    public float AlarmWeight => Kind switch
+    {
+        LootKind.Canned => 0.7f,
+        LootKind.Bagged => 1.0f,
+        LootKind.Boxed => 1.5f,
+        _ => 1.0f,
+    };
 
     /// <summary>True when the item is on the floor/shelf, waiting to be taken.</summary>
     public bool IsLoose => State == LootState.Loose;

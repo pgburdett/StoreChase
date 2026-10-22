@@ -37,6 +37,11 @@ namespace StoreChase
         private readonly List<Critter> _critters = new();
         private readonly Random _rng = new();
 
+        // What the cats know about the player, shared between them. One cat
+        // spotting the player has to matter to the others, or each cat is an
+        // island and the store feels dead.
+        private readonly SharedAwareness _awareness = new();
+
         // The objective: loot, the alarm that fills while it's missing, and the
         // ball you can throw to move a cat off whatever it's doing.
         private ItemField _items = null!;
@@ -90,6 +95,7 @@ namespace StoreChase
         // Cached per-frame values shared by the critters and the HUD.
         private GridPos? _ballCell;
         private GridPos? _lootTarget;
+        private LootItem? _lootTargetItem;
 
         public const int LootCount = 5;
         public const int CritterCount = 3;
@@ -524,7 +530,7 @@ namespace StoreChase
             UpdateHeartbeat(dt);
             _hud.Update(dt);
 
-            _alarm.Update(dt, _items.StolenCount, _items.Held != null, _items.AllSecured);
+            _alarm.Update(dt, _items.StolenWeight, _items.Held != null, _items.AllSecured);
             UpdateAlarmAudio(dt);
 
             if (_alarm.Tripped)
@@ -645,14 +651,25 @@ namespace StoreChase
                 PlayerCell: _player.Cell,
                 Ball: _ballCell,
                 LootTarget: _lootTarget,
+                LootTargetItem: _lootTargetItem,
                 StolenCount: _items.StolenCount,
                 LootUnderfoot: c => _items.LooseAt(c.Cell),
-                TrySteal: c => TrySteal(c));
+                TrySteal: c => TrySteal(c),
+                AlarmStage: _alarm.Stage);
+
+            // What each cat can see, worked out for all of them at once. This
+            // has to happen before any of them acts, so that a cat which
+            // spots the player on this frame can pass the news to the others
+            // on the same frame.
+            foreach (var critter in _critters)
+                UpdateAwareness(critter);
+
+            _awareness.Reset(_critters);
+            _awareness.Update(_player.Cell, _map);
 
             for (int i = _critters.Count - 1; i >= 0; i--)
             {
                 var critter = _critters[i];
-                UpdateAwareness(critter);
                 critter.Update(gameTime, locus);
 
                 // Drive the rig here, in the update loop, not in Draw: it
@@ -796,7 +813,12 @@ namespace StoreChase
             }
 
             _items.Update(dt, _player.Cell, CarryHeight);
-            _lootTarget = _items.NearestLoose(_player.Cell)?.Cell;
+
+            // The nearest loose item, and where it is. The critters need both
+            // halves: the cell to path to, and the item itself so they can
+            // decide whether they want what is in it.
+            _lootTargetItem = _items.NearestLoose(_player.Cell);
+            _lootTarget = _lootTargetItem?.Cell;
         }
 
         /// <summary>
@@ -825,7 +847,12 @@ namespace StoreChase
             _effect.View = _camera.View;
             _effect.Projection = _camera.Projection;
             _effect.LightingEnabled = true;
-            _effect.AmbientLightColor = new Vector3(0.5f, 0.5f, 0.5f); // Fills in shadows
+
+            // The store's lighting reacts to the alarm. A store that is about
+            // to go off does not look like a calm one, and the ambient tint
+            // is the cheapest way to say so — it needs no extra geometry and
+            // it affects every surface in the room at once.
+            _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level);
             _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
             // Floor (single quad at origin, Y=0)
             DrawMesh(_floorVerts, Matrix.Identity, _textures.Floor);
@@ -1136,6 +1163,20 @@ namespace StoreChase
             }
         }
 
+        /// <summary>
+        /// The ambient light colour for a given alarm level.
+        ///
+        /// Cool and neutral when the store is calm, warming towards red as
+        /// the meter fills. The shift is eased rather than stepped, so the
+        /// room's colour follows the meter continuously.
+        /// </summary>
+        private static Vector3 AmbientForAlarm(float level)
+        {
+            var calm = new Vector3(0.5f, 0.5f, 0.55f);
+            var alarmed = new Vector3(0.62f, 0.26f, 0.24f);
+            return Vector3.Lerp(calm, alarmed, MathHelper.Clamp(level, 0f, 1f));
+        }
+
         // Snapshots everything the HUD needs for one frame. The HUD is
         // read-only: it draws the state, it never writes it back. Passing a
         // snapshot rather than the subsystems themselves is what keeps the
@@ -1149,10 +1190,12 @@ namespace StoreChase
             PlayerCarrying: _items.Held != null,
             StolenCount: _items.StolenCount,
             AlarmCause: _alarm.Cause,
+            AlarmStage: _alarm.Stage,
             AlarmLevel: _alarm.Level,
             ViewMode: _camera.Mode,
             ViewProjection: _camera.ViewProjection,
             Critters: _critters,
+            Loot: _items.Items,
             TitlePhase: _title.Phase);
 
         protected override void UnloadContent()

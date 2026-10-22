@@ -61,6 +61,37 @@ public sealed record CritterProfile
     /// <summary>Ignores a thrown ball.</summary>
     public required bool IgnoresBall { get; init; }
 
+    /// <summary>
+    /// What this species is after.
+    ///
+    /// A cat only bothers with the goods it likes: the drive to steal a
+    /// preferred kind is <see cref="ThiefDrive"/>, and anything else is
+    /// stolen with <see cref="ThiefDrive"/> times
+    /// <see cref="UnpreferredThiefFactor"/>, which is usually "not at all".
+    ///
+    /// This is what turns the loot's three kinds from a colour into a
+    /// decision for the player: knowing the cats' tastes tells you which
+    /// items to watch, and knowing the shop's tastes tells you which to
+    /// leave out.
+    /// </summary>
+    public required LootKind PreferredKind { get; init; }
+
+    /// <summary>
+    /// How much of its usual drive a cat keeps for goods it does not want.
+    ///
+    /// Zero means "leaves it alone", which is the usual case.
+    /// </summary>
+    public required float UnpreferredThiefFactor { get; init; }
+
+    /// <summary>
+    /// How likely this species is to grab a loose item it happens to be
+    /// standing on, given that it does not particularly want it.
+    /// </summary>
+    public float ThiefDriveFor(LootKind kind) =>
+        kind == PreferredKind
+            ? ThiefDrive
+            : ThiefDrive * UnpreferredThiefFactor;
+
     // Presentation. The rig has one model, so the cats are told apart by size,
     // a tint and what they do when idle.
     /// <summary>Scale factor applied to the shared cat model.</summary>
@@ -92,6 +123,9 @@ public sealed record CritterProfile
             ThiefDrive = 0.95f,
             FreezesWhenWatched = false,
             IgnoresBall = false,
+            // The big-box criminal: whatever is in the cartons.
+            PreferredKind = LootKind.Boxed,
+            UnpreferredThiefFactor = 0f,
             Scale = 1f,
             Tint = new Color(255, 255, 255), // the diffuse texture unmodified
             IdlePose = CatPose.Stand,
@@ -111,6 +145,9 @@ public sealed record CritterProfile
             ThiefDrive = 0.7f,
             FreezesWhenWatched = false,
             IgnoresBall = false,
+            // A kitten will take anything, but it goes for the easy stuff.
+            PreferredKind = LootKind.Bagged,
+            UnpreferredThiefFactor = 0.35f,
             Scale = 0.7f,
             Tint = new Color(255, 236, 214),
             IdlePose = CatPose.Stand,
@@ -129,6 +166,9 @@ public sealed record CritterProfile
             ThiefDrive = 0.25f,
             FreezesWhenWatched = false,
             IgnoresBall = true,
+            // It only nibbles at the tins, and only if it has to.
+            PreferredKind = LootKind.Canned,
+            UnpreferredThiefFactor = 0f,
             Scale = 1.25f,
             Tint = new Color(214, 200, 186),
             IdlePose = CatPose.Loaf,
@@ -147,6 +187,9 @@ public sealed record CritterProfile
             ThiefDrive = 0.8f,
             FreezesWhenWatched = true,
             IgnoresBall = false,
+            // Nervous about the tins being heavy, so it takes the light bags.
+            PreferredKind = LootKind.Bagged,
+            UnpreferredThiefFactor = 0.2f,
             Scale = 0.9f,
             Tint = new Color(226, 228, 236),
             IdlePose = CatPose.Stand,

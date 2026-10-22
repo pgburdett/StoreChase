@@ -63,6 +63,26 @@ public class Critter
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
+    /// <summary>
+    /// How unsure this critter is about where the player is.
+    ///
+    /// Zero means it knows exactly — it can see them. A larger number means
+    /// a vaguer idea: it heard about the player from another cat, and the
+    /// news travelled a distance and degraded on the way.
+    ///
+    /// It is a *vagueness*, not a distance, so that "seeing the player" and
+    /// "hearing about the player" can be compared directly.
+    /// </summary>
+    public float PlayerAwareness { get; set; }
+
+    /// <summary>
+    /// The last place this critter saw the player.
+    ///
+    /// Kept so a cat that has lost sight of the player can head for where
+    /// they were, rather than wandering off.
+    /// </summary>
+    public GridPos? LastSeenPlayerCell { get; set; }
+
     private GridPos _from;
     private GridPos _to;
     private float _t;
@@ -191,8 +211,12 @@ public class Critter
         Ball: locus.Ball,
         LootUnderfoot: locus.LootUnderfoot(this),
         LootTarget: locus.LootTarget,
+        LootTargetItem: locus.LootTargetItem,
         Carrying: Carrying,
-        StolenCount: locus.StolenCount);
+        StolenCount: locus.StolenCount,
+        AlarmStage: locus.AlarmStage,
+        PlayerAwareness: PlayerAwareness,
+        LastSeenPlayerCell: LastSeenPlayerCell);
 
     /// <summary>Marks the critter as tackled. The game handles the drop and removal.</summary>
     public void Tackle() => Tackled = true;
@@ -208,7 +232,9 @@ public readonly record struct CritterLocus(
     GridPos PlayerCell,
     GridPos? Ball,
     GridPos? LootTarget,
+    LootItem? LootTargetItem,
     int StolenCount,
     Func<Critter, LootItem?> LootUnderfoot,
-    Func<Critter, bool> TrySteal
+    Func<Critter, bool> TrySteal,
+    AlarmStage AlarmStage = AlarmStage.Calm
 );

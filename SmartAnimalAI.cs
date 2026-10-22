@@ -137,11 +137,30 @@ public class SmartAnimalAI : ICritterAI
             return Alert(context);
         }
 
-        // 8. Nothing happening. Go and find something to steal, or wander.
-        if (context.LootTarget is { } target && context.StolenCount < 3)
+        // 7b. Hasn't seen you, but has heard about you. Head for where you
+        // were, or at least look that way. This is what makes one cat
+        // spotting the player matter to the cats two aisles away.
+        //
+        // Awareness is a vagueness: zero would mean it knows exactly, but
+        // that case is handled by CanSeePlayer above. Anything else means a
+        // rough fix worth heading towards.
+        if (context.LastSeenPlayerCell is { } lastSeen && context.PlayerAwareness > 0f)
         {
-            if (_rng.NextDouble() < _profile.ThiefDrive)
-                return PathStepToward(context.Map, context.CurrentCell, target);
+            if (dist > _profile.AlertRadius)
+                return PathStepToward(context.Map, context.CurrentCell, lastSeen);
+        }
+
+        // 8. Nothing happening. Go and find something to steal, or wander.
+        if (context.LootTargetItem is { } item && context.StolenCount < 3)
+        {
+            // A cat only bothers with what it likes — unless the store is
+            // about to go off, in which case it takes what it can get.
+            float drive = _profile.ThiefDriveFor(item.Kind);
+            if (context.AlarmStage == AlarmStage.Critical)
+                drive = MathF.Max(drive, _profile.ThiefDrive * 0.75f);
+
+            if (_rng.NextDouble() < drive)
+                return PathStepToward(context.Map, context.CurrentCell, item.Cell);
         }
 
         return Wander(context);
@@ -153,8 +172,17 @@ public class SmartAnimalAI : ICritterAI
     {
         paused = false;
         if (_profile.ThiefDrive <= 0f) return false;
+        if (context.LootUnderfoot is not { } underfoot) return false;
 
-        bool inclined = _rng.NextDouble() < _profile.ThiefDrive;
+        // Only what it likes. A cat that does not want tins walks over them.
+        // Unless the store is about to go off, in which case it takes what it
+        // can get.
+        float drive = _profile.ThiefDriveFor(underfoot.Kind);
+        if (context.AlarmStage == AlarmStage.Critical)
+            drive = MathF.Max(drive, _profile.ThiefDrive * 0.75f);
+        if (drive <= 0f) return false;
+
+        bool inclined = _rng.NextDouble() < drive;
         if (!inclined) return false;
 
         // A cat that can see the player standing right there is less likely to

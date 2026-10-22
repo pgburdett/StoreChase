@@ -9,6 +9,11 @@ and a first-person mouse-look view. The two aren't just different ways of
 looking at the store — the first-person camera is a tactic, because a cat can
 see whether you're looking straight at it.
 
+The store is bigger than the screen. The camera follows the player, so the
+aisles scroll past as you move; the shelf walls block your view, and a cat
+two aisles away that has heard you is a different problem from one you can
+see.
+
 Everything visual is either procedural geometry, a texture generated in code,
 or a runtime-loaded OBJ. There are no image or audio assets.
 
@@ -21,6 +26,28 @@ dotnet run
 
 The content pipeline runs automatically on build. To edit content with the
 MGCB CLI instead, `dotnet tool restore` (pins `dotnet-mgcb`) then use `mgcb`.
+
+## Verifying changes
+
+The game has a headless harness that exercises everything except the
+rendering:
+
+```
+dotnet run --project harness/StoreChase.Harness
+```
+
+It plays whole rounds and asserts the heist rules, measures the animation rig
+for tearing, smoke-tests the geometry builders, and checks the camera's
+framing. It exits non-zero if anything fails, so it works as a smoke test
+after any change. There are more modes:
+
+```
+--geometry    only the geometry, camera, loot and awareness checks
+--rig         only the rig measurements
+--rounds      only the round simulation
+--trace       trace one round, frame by frame
+--sweep       play many rounds at a range of alarm settings
+```
 
 ## The round
 
@@ -39,9 +66,42 @@ A cat that reaches the counter while carrying something **drops it there** and
 the alarm jumps — bolting for the till is a delaying tactic that moves the
 goods somewhere inconvenient, not a way out.
 
+### The goods have kinds
+
+The three kinds of goods are not just different colours:
+
+- **cans** are cheap (the store barely notices one going missing)
+- **bags** are worth the going rate
+- **cartons** are expensive, and the alarm cares twice as much about them
+
+Each species also has a **taste**. The Shop Cat goes for the cartons and
+ignores everything else; a Kitten will take anything but prefers the bags; the
+Lounge Lizard only nibbles at tins and only if it has to. The HUD lists what
+each cat is after, so knowing which goods to watch is a matter of reading the
+panel.
+
+### The store has moods
+
+The alarm meter is not just a number. It passes through three stages, and the
+cats react to them:
+
+- **calm** — the cats go about their business
+- **suspicious** — the lighting warms towards red and the cats get braver
+- **critical** — the cats stop playing about and go for the goods whatever
+  they feel like, which is the moment the store is most likely to be emptied
+  out from under you
+
+### The cats talk to each other
+
+One cat seeing you is enough for the others to know. A cat that spots you
+raises the alarm, and it carries to any cat within eight cells — but the
+further the news travels, the vaguer it gets, so a cat across the store has
+only a rough idea of where you were. A cat with a rough idea heads that way
+rather than wandering off.
+
 ## Controls
 
-Keyboard/mouse and gamepad are both supported and **auto-detected** — whichever
+Keyboard / mouse and gamepad are both supported and **auto-detected** — whichever
 device you use last becomes active (see Input below).
 
 Keyboard / mouse:
@@ -52,7 +112,7 @@ Keyboard / mouse:
 - Mouse wheel: zoom in/out
 - V: toggle first-person / isometric view
 - Mouse: look around in first-person (the pointer is captured)
-- Left click / F: throw a ball (first-person only)
+- Left click / F: throw a ball (aimed along the camera's ground heading)
 - Escape: quit
 - R: restart, once the round is over
 
@@ -70,31 +130,39 @@ Gamepad:
 
 - `Program.cs` → `Game1.cs` (all rendering + orchestration). Gameplay files
   are top-level `.cs` files, namespace `StoreChase`.
-- `GridMap.cs` — pure grid logic: walkability, BFS (`NextStepToward`,
-  `DistanceMapFrom`), line of sight, the counter row, and the cell enumerations
-  the spawners use. `GridPos` lives in the same file. Map layout is a hardcoded
-  string array, **18×12**.
+- `StoreLayout.cs` — the floor plans: the grid, the counter, the player
+  start, and the generator that makes a store of any size. `StoreLayouts.All`
+  is the list.
+- `GridMap.cs` — pure grid logic over a `StoreLayout`: walkability, BFS
+  (`NextStepToward`, `DistanceMapFrom`), line of sight, the counter, and the
+  cell enumerations the spawners use. `GridPos` lives in the same file.
 - `Player.cs` / `Critter.cs` — movement. `Critter` is always grid-locked;
   `Player` is grid-locked in isometric and free world-space in first-person.
   Both expose `Vector3 WorldPos` (X/Z plane, Y=0) and have **no `Draw` method**;
   `Game1` owns all rendering. World space is X/Z with Y = up;
   `Game1.CellSize = 2f` world units per grid cell.
-- `Camera.cs` — camera state and controls, plus the view-cone test the AI uses
-  to know whether it's being watched.
+- `Camera.cs` — camera state and controls, plus the view test the AI uses to
+  know whether it's being watched. It follows the player, so a store bigger
+  than the screen scrolls.
 - `ItemField.cs` / `LootItem.cs` — the merchandise and every rule about who is
   holding what.
-- `AlarmSystem.cs` — the 0..1 meter and the conditions that move it.
+- `AlarmSystem.cs` — the 0..1 meter, the conditions that move it, and the
+  stages it passes through.
+- `SharedAwareness.cs` — what the cats know about the player, and how the
+  news travels between them.
 - `Ball.cs` — the throwable, and the distraction it exists to provide.
 - `CritterProfile.cs` — every number that makes one species differ from
-  another.
+  another, including what it wants to steal.
 - `ICritterAI.cs` / `SmartAnimalAI.cs` — the decision seam and the brain behind
   it.
 - `CatAnimator.cs` — the procedural rig (see below).
 - `StoreTextures.cs` — the store's surfaces, generated in code.
 - `Sfx.cs` — every sound, synthesised at startup, including the proximity
   heartbeat.
+- `Hud.cs` / `MessageFeed.cs` — the screen-space overlay and the event feed.
 - Input, events, and the title each have their own small subsystem; see the
   sections below.
+- `harness/StoreChase.Harness/` — the headless verification (see above).
 
 ## The heist loop
 
@@ -112,25 +180,42 @@ The priority order in `SmartAnimalAI.DecideNextMove` is the whole design:
 5. carrying something, player far → make for the counter
 6. the player is close → flee
 7. the player is nearby → drift away
-8. otherwise → wander, biased toward shelves
+7b. heard about the player but can't see them → head for where they were
+8. otherwise → go and take something, if it's the kind it wants
 
-Step 8's bias matters more than it looks: the loot is *on the shelves*, so a
-wandering cat tends to wander into some. That keeps the heist going without
-every cat pathing across the store the moment something appears.
+Step 8 is not a random walk: a cat paths *straight* at the nearest goods it
+wants, so a store where the Shop Cat is loose is a store where the cartons
+disappear first. That is the whole point of the tastes — the player has to
+work out which goods are at risk and get to them, rather than treating every
+item the same.
 
 ### Balance
 
-The alarm rates were tuned against a headless simulation of full rounds (a
+The alarm rates were tuned against the headless simulation of full rounds (a
 scripted player moving at the real `Player` grid speed, beelining for the
 nearest item and ignoring the cats). At the original `StolenRate` of 0.055 that
 bot won about a third of its rounds and lost almost every round in which
 anything was stolen — there wasn't time left to chase a thief down and still
 clear the store. `0.042` gives one unattended thief roughly 24 seconds, which
 is enough to corner one, while two thieves still fill the meter in about 12.
-Rounds run 10–35 seconds.
 
 The bot losing ~70% of the time is the intended read: it has no way to respond
 to a theft at all, and a player who actually corners a thief has the margin.
+
+The rates are *per second*, and a bigger store takes longer to clear, so they
+are scaled by how much work the store is (`StoreLayout.AlarmScale`). Without
+that, a bigger store is not harder but unwinnable: the player has further to
+walk between the till and the shelves, and the meter fills before the round
+can be finished. The scaling keeps the same amount of *alarm budget* in a
+round whatever its size. The counter drop is a fixed fraction of the meter
+rather than a scaled one, because it is a single event rather than a rate.
+
+The sweep modes exist so these numbers can be chosen against data rather than
+by playing a handful of rounds by hand:
+
+```
+dotnet run --project harness/StoreChase.Harness -- --sweep
+```
 
 ## Critters
 
@@ -158,19 +243,31 @@ mechanic:
   actually block) within the species' `VisionRadius`. This is *sight*, not
   reachability: a cat can see you straight down an aisle it can't walk to you
   along, which `DistanceMapFrom` would get wrong.
-- **`BeingWatched`** — `Camera.IsInViewCone`, a 36° cone in first person and a
-  near-180° one overhead. A Nervous cat roots itself while this is true.
+- **`BeingWatched`** — `Camera.IsInViewCone`. In first person it's a real cone
+  (a 36° half-angle, so 72° across); overhead the camera looks straight down,
+  so a cone would cover the whole store and mean nothing, and the test is
+  instead "is it on screen". That distinction only became meaningful once
+  the store grew bigger than the viewport: a cat across the store is genuinely
+  out of sight. A Nervous cat roots itself while this is true.
 
-That's why the overhead camera is a real cost rather than a neutral view: from
-up there everything is in frame, so a Nervous cat is never pinned.
+So the overhead view is wide but bounded — you can pin a Nervous cat that is
+in front of you, but not one you have to walk to — and first person is the
+narrow, deliberate version where your gaze is the pin.
 
 ### The ball
 
-Thrown in first person along the camera's ground heading, bounces off shelves,
-settles, and lies there being interesting for seven seconds. Cats that aren't
-`IgnoresBall` abandon everything to go and look at it — including a thief
-mid-escape, which is how you pull one off a good hiding place. It's the only
+Thrown along the camera's ground heading, bounces off shelves, and explodes
+where it lands. It works in both camera modes, but only first person aims it
+meaningfully: overhead, the camera looks straight down, so a throw always
+travels the same way.
+
+A ball that lands on a cat **stuns it** and makes it drop whatever it was
+carrying — the cat sits out the stun and stays in the game. That is the only
 offensive tool, and it doubles as a leash.
+
+Cats that aren't `IgnoresBall` go and look at a ball that is bouncing — but
+not a thief in the middle of an escape, which keeps a bolt for the counter
+honest.
 
 ## Content & assets
 
@@ -459,33 +556,44 @@ so the quiet early part of a round stays quiet.
 
 ## Working without a display
 
-None of `GridMap`, `Critter`, `SmartAnimalAI`, `ItemField`, `AlarmSystem` or
-`Ball` touch a `GraphicsDevice`, and `ObjLoader.ParseGeometry` returns the
-geometry with no textures and no device. That makes the whole simulation
-testable from a console project referencing the game:
+None of `GridMap`, `Critter`, `SmartAnimalAI`, `ItemField`, `AlarmSystem`,
+`SharedAwareness` or `Ball` touch a `GraphicsDevice`, `ObjLoader.ParseGeometry`
+returns the geometry with no textures and no device, and `Camera` has a
+constructor that takes an aspect ratio instead of a device. That makes the
+whole simulation testable from a console project referencing the game — which
+is what `harness/StoreChase.Harness` is.
 
 - **Play full rounds headlessly** and assert on the rules: items never
   duplicate or vanish, an item is never in two hands, both outcomes are
-  reachable, and no round deadlocks. This is how the alarm balance and two real
-  bugs were found — an item orphaned in the `Held` state when a thief was
-  tackled at the counter, and a `NearestLoose` sort key that made a chasing
-  player oscillate between two items forever.
-- **Render the rig** with a small software rasterizer, and measure edge stretch
-  per body region against the rest pose to catch tearing numerically instead of
-  by eye.
+  reachable, a passive player never wins, and no round deadlocks. This is how
+  the alarm balance and three real bugs were found — an item orphaned in the
+  `Held` state when a thief was tackled at the counter, a `NearestLoose` sort
+  key that made a chasing player oscillate between two items forever, and a
+  thief that reached the counter and stood there holding the loot forever,
+  which made any round with a theft unwinnable.
+- **Measure the rig** for edge stretch per body region against the rest pose,
+  to catch tearing numerically instead of by eye.
 - **Smoke-test the pure geometry builders** and assert on invariants rather
-  than golden values: UVs reach the repeat counts, normals are unit length, the
-  cube still sits on the floor, a shelf actually blocks line of sight, a thrown
-  ball travels a useful distance and never ends up inside geometry. The ball
-  checks caught two physics bugs that were invisible in the source.
+  than golden values: UVs reach the repeat counts, normals are unit length,
+  the cube still sits on the floor, a shelf actually blocks line of sight, a
+  thrown ball travels a useful distance and never ends up inside geometry. The
+  ball checks caught two physics bugs that were invisible in the source.
+- **Check the camera's framing**: that the viewport is smaller than the store,
+  that the view follows the player, that it never leaves the floor plan, and
+  that the far side of the store is genuinely off screen.
+- **Sweep the alarm** across a range of settings and report the win rate for
+  each, so the numbers are chosen against data rather than by hand.
 
-All three were necessary. The rig in particular cannot be judged by reading it,
-and its first pass looked plausible in code and was unusable on screen.
+All of them were necessary. The rig in particular cannot be judged by reading
+it, and its first pass looked plausible in code and was unusable on screen.
+The player-cannot-stop bug is the other one worth remembering: it was not in
+the code, it was in a comment explaining why it was deliberate.
 
 ## Things you'll likely want to tweak
 
-1. **Camera height/framing** — orthographic width/height is map size plus
-   `CellSize * 2` padding, scaled by zoom; adjust in `Camera.UpdateCameraMatrices`.
+1. **Camera framing** — the viewport is `Camera.ViewCellsWide` cells across at
+   zoom 1, scaled by zoom and clamped to the store's edges; adjust in
+   `Camera.UpdateCameraMatrices`.
 2. **Wall height** — currently `CellSize * 1.5f`. In a true top-down orthographic
    view taller walls don't occlude more floor, so height mostly matters if you
    tilt.

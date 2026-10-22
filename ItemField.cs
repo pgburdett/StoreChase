@@ -35,6 +35,18 @@ public class ItemField
     /// <summary>Number of items currently carried by critters.</summary>
     public int StolenCount => _items.Count(i => i.State == LootState.Carried);
 
+    /// <summary>
+    /// How much the alarm cares about what is currently out of place.
+    ///
+    /// This is the sum of the stolen items' weights, rather than a plain
+    /// count. A single boxed item is worth more to the store than three tins,
+    /// so the alarm should treat them differently — otherwise the player has
+    /// no reason to care which goods they left on the shelves.
+    /// </summary>
+    public float StolenWeight => _items
+        .Where(i => i.State == LootState.Carried)
+        .Sum(i => i.AlarmWeight);
+
     /// <summary>The item the player is carrying, if any.</summary>
     public LootItem? Held { get; private set; }
 

@@ -20,10 +20,12 @@ public readonly record struct HudState(
     bool PlayerCarrying,
     int StolenCount,
     AlarmCause AlarmCause,
+    AlarmStage AlarmStage,
     float AlarmLevel,
     CameraViewMode ViewMode,
     Matrix ViewProjection,
     IReadOnlyList<Critter> Critters,
+    IReadOnlyList<LootItem> Loot,
     float TitlePhase);
 
 // The screen-space overlay: the objective readout, the alarm meter, the
@@ -146,9 +148,46 @@ public sealed class Hud
             line.Y += step;
         }
 
+        // Each species' taste, so the player knows which goods to watch.
+        line.Y += step;
+        _spriteBatch.DrawString(font, "After:", line, Color.DimGray);
+        line.Y += step;
+        foreach (var critter in state.Critters)
+        {
+            _spriteBatch.DrawString(font,
+                $"  {critter.Profile.Name} wants {KindName(critter.Profile.PreferredKind)}",
+                line, Color.DimGray);
+            line.Y += step;
+        }
+
+        // The goods still on the shelves, with what each is worth. This is
+        // the read that makes the loot's kinds matter: the player can see
+        // which items are worth a panic and which are not.
+        line.Y += step;
+        _spriteBatch.DrawString(font, "On the shelves:", line, Color.DimGray);
+        line.Y += step;
+        foreach (var item in state.Loot)
+        {
+            string where = item.IsSecured ? "counter"
+                : item.State == LootState.Carried ? "STOLEN"
+                : item.State == LootState.Held ? "in hand"
+                : "shelf";
+            _spriteBatch.DrawString(font, $"  {KindName(item.Kind)} ({where})",
+                line, item.Tint);
+            line.Y += step;
+        }
+
         string view = state.ViewMode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
         _spriteBatch.DrawString(font, $"[V] view: {view}", new Vector2(16, _graphicsDevice.Viewport.Height - 60), Color.LightGray);
     }
+
+    /// <summary>The display name of a kind of goods.</summary>
+    private static string KindName(LootKind kind) => kind switch
+    {
+        LootKind.Canned => "cans",
+        LootKind.Boxed => "cartons",
+        _ => "bags",
+    };
 
     // The alarm: a bar that fills as the meter rises, tinted by cause so
     // you can tell at a glance whether the cat or you are the problem.
@@ -176,7 +215,23 @@ public sealed class Hud
             AlarmCause.PlayerCarrying => "ALARM - you're carrying it",
             _ => "Store alarm",
         };
+
+        // The stage is the escalating part: past the critical threshold the
+        // store is about to go off, and that has to be unmissable.
+        if (state.AlarmStage == AlarmStage.Critical)
+            label = "ALARM - THE STORE IS ABOUT TO GO OFF";
+
         _spriteBatch.DrawString(_font!, label, new Vector2(x, y - 22), fill);
+
+        // A second line naming the band, so the escalation is legible even
+        // when the meter is not filling.
+        string stage = state.AlarmStage switch
+        {
+            AlarmStage.Critical => "critical",
+            AlarmStage.Suspicious => "suspicious",
+            _ => "calm",
+        };
+        _spriteBatch.DrawString(_font!, stage, new Vector2(x + width, y - 22), fill);
     }
 
     // One contextual line of controls, so the keybinds that only matter at

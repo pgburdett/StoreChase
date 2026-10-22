@@ -38,12 +38,53 @@ public record struct CritterContext(
     /// picked clean.</summary>
     GridPos? LootTarget,
 
+    /// <summary>
+    /// The nearest loose item, or null when the store is picked clean.
+    ///
+    /// This is the same item as <see cref="LootTarget"/>, but with its kind
+    /// attached, so the AI can decide whether it actually wants it. A cat
+    /// that only steals the boxed goods should path to a box and ignore a
+    /// tin; that is not something a cell on its own can express.
+    /// </summary>
+    LootItem? LootTargetItem,
+
     /// <summary>Whether this critter is currently carrying something.</summary>
     bool Carrying,
 
     /// <summary>How many items are off the shelves in total, so a cat can tell
     /// whether the store is worth raiding.</summary>
-    int StolenCount
+    int StolenCount,
+
+    /// <summary>
+    /// How alarmed the store is.
+    ///
+    /// This is the round's mood. At <see cref="AlarmStage.Suspicious"/> the
+    /// cats get braver — more likely to grab goods they do not particularly
+    /// want. At <see cref="AlarmStage.Critical"/> they stop playing about and
+    /// go for the goods whatever they feel like, which is the moment the
+    /// store is most likely to be emptied out from under the player.
+    /// </summary>
+    AlarmStage AlarmStage,
+
+    /// <summary>
+    /// How unsure this cat is about where the player is.
+    ///
+    /// Zero means it knows exactly — it can see them. A larger number means
+    /// a vaguer idea: it heard about the player from another cat, and the
+    /// news travelled a distance and degraded on the way (see
+    /// <see cref="SharedAwareness"/>).
+    ///
+    /// This is what makes one cat spotting the player matter to the others.
+    /// </summary>
+    float PlayerAwareness,
+
+    /// <summary>
+    /// The last place this cat saw the player, if it has seen them at all.
+    ///
+    /// A cat that has lost sight of the player but knows roughly where they
+    /// were will head for that spot rather than wandering off.
+    /// </summary>
+    GridPos? LastSeenPlayerCell
 );
 
 /// <summary>

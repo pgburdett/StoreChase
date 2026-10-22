@@ -57,7 +57,7 @@ public static class Trace
             if (items.TrySecure(player.Cell)) { alarm.Ping(); Console.WriteLine($"  [{frame}] SECURED at counter, now {items.SecuredCount}/{items.TotalCount}"); }
             items.Update(dt, player.Cell, 1.5f);
             float before = alarm.Level;
-            alarm.Update(dt, items.StolenCount, items.Held != null, items.AllSecured);
+            alarm.Update(dt, items.StolenWeight, items.Held != null, items.AllSecured);
             float delta = alarm.Level - before;
             if (MathF.Abs(delta) > 0.0001f)
             {

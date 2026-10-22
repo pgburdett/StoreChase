@@ -61,6 +61,21 @@ public class AlarmSystem
     /// <summary>Set each frame by Game1 so the HUD can show why it's rising.</summary>
     public AlarmCause Cause { get; private set; }
 
+    /// <summary>
+    /// Which band the meter is in.
+    ///
+    /// This is what the cats read: below <see cref="SuspicionThreshold"/>
+    /// they go about their business, above <see cref="CriticalThreshold"/>
+    /// they stop caring what they want and go for the goods.
+    /// </summary>
+    public AlarmStage Stage { get; private set; } = AlarmStage.Calm;
+
+    /// <summary>The meter level at which the store becomes suspicious.</summary>
+    public const float SuspicionThreshold = 0.4f;
+
+    /// <summary>The meter level at which the store is about to go off.</summary>
+    public const float CriticalThreshold = 0.75f;
+
     /// <summary>Raised when the cause changes (e.g. from Calm to Thief).</summary>
     public event Action<AlarmCause>? Changed;
 
@@ -76,18 +91,26 @@ public class AlarmSystem
     /// Advances the alarm meter one frame.
     ///
     /// The meter rises while a critter is carrying something (rate scales with
-    /// how many are in flight) or while the player is carrying something (much
-    /// lower rate). It drains when nothing is out. A short grace period after a
-    /// change in state prevents the meter from spiking on the same frame.
+    /// how much is in flight, weighted by what the goods are worth) or while
+    /// the player is carrying something (much lower rate). It drains when
+    /// nothing is out. A short grace period after a change in state prevents
+    /// the meter from spiking on the same frame.
     /// </summary>
-    public void Update(float dt, int stolenCount, bool playerCarrying, bool securedAll)
+    /// <param name="dt">Seconds since the last frame.</param>
+    /// <param name="stolenWeight">
+    /// How much is out of place, weighted by value (see
+    /// <see cref="ItemField.StolenWeight"/>).
+    /// </param>
+    /// <param name="playerCarrying">Whether the player is carrying something.</param>
+    /// <param name="securedAll">Whether every item is behind the counter.</param>
+    public void Update(float dt, float stolenWeight, bool playerCarrying, bool securedAll)
     {
         if (Tripped) return;
 
         _grace = MathF.Max(0f, _grace - dt);
 
         var cause = AlarmCause.Calm;
-        if (stolenCount > 0) cause = AlarmCause.Thief;
+        if (stolenWeight > 0f) cause = AlarmCause.Thief;
         else if (playerCarrying) cause = AlarmCause.PlayerCarrying;
         // Winning stops the meter entirely rather than letting it sit full.
         else if (securedAll) cause = AlarmCause.Won;
@@ -98,12 +121,19 @@ public class AlarmSystem
             Changed?.Invoke(cause);
         }
 
+        // The band the meter is in. Recomputed every frame rather than only
+        // when the cause changes, because the meter can cross a threshold
+        // while the cause stays the same.
+        Stage = Level >= CriticalThreshold ? AlarmStage.Critical
+               : Level >= SuspicionThreshold ? AlarmStage.Suspicious
+               : AlarmStage.Calm;
+
         if (_grace > 0f) return;
 
         switch (cause)
         {
             case AlarmCause.Thief:
-                Level += StolenRate * RateScale * stolenCount * dt;
+                Level += StolenRate * RateScale * stolenWeight * dt;
                 break;
             case AlarmCause.PlayerCarrying:
                 Level += PlayerCarryingRate * RateScale * dt;
@@ -153,4 +183,30 @@ public enum AlarmCause
 
     /// <summary>Everything is secured — the round is won.</summary>
     Won,
+}
+
+/// <summary>
+/// How alarmed the store is.
+///
+/// The meter itself is a 0..1 float, but the cats and the HUD care about
+/// bands rather than the exact value: "things are getting interesting" and
+/// "the store is about to go off" are different situations that want
+/// different behaviour.
+/// </summary>
+public enum AlarmStage
+{
+    /// <summary>Quiet. The meter is below <see cref="AlarmSystem.SuspicionThreshold"/>.</summary>
+    Calm,
+
+    /// <summary>
+    /// Something is wrong. The cats get braver and the store's lights start
+    /// to change.
+    /// </summary>
+    Suspicious,
+
+    /// <summary>
+    /// The alarm is about to go off. The cats stop playing about and go for
+    /// the goods regardless of what they wanted.
+    /// </summary>
+    Critical,
 }
