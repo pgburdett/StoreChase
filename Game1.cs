@@ -168,7 +168,7 @@ namespace StoreChase
         // A small cube, reused for the loot boxes and the ball.
         private VertexPositionNormalColorTexture[] _propVerts = null!;
 
-        private RunPhase _phase = RunPhase.Playing;
+        private RunPhase _phase = RunPhase.Title;
         private float _elapsedTime = 0f;
 
         // Cached per-frame values shared by the critters and the HUD.
@@ -301,7 +301,7 @@ namespace StoreChase
             // silent machine gets silence rather than a crash.
             Music.Start();
 
-            StartRound();
+            StartRound(false);
 
             base.Initialize();
         }
@@ -424,7 +424,7 @@ namespace StoreChase
         /// critter objects, so the old cast's meshes must be dropped with the
         /// cast or every restart leaks one model per cat.
         /// </summary>
-        private void StartRound()
+        private void StartRound(bool startPlaying = true)
         {
             var spec = _campaign.CurrentSpec;
 
@@ -578,7 +578,7 @@ namespace StoreChase
             _ball.Clear();
 
             _elapsedTime = 0f;
-            _phase = RunPhase.Playing;
+            if (startPlaying) _phase = RunPhase.Playing;
             _endMessage = "";
             // A fresh cast needs a fresh set of animated meshes. Do this after
             // the critters list is rebuilt, since the meshes are keyed on the
@@ -586,7 +586,8 @@ namespace StoreChase
             // already have one.
             LoadCritterModels();
 
-            EventSystem.Instance.Publish(new GameStartedEvent());
+            if (startPlaying)
+                EventSystem.Instance.Publish(new GameStartedEvent());
         }
 
         // Somewhere apart from the player's start (1,1) and spread out, so the
@@ -834,6 +835,10 @@ namespace StoreChase
             {
                 _elapsedTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
                 UpdatePlay(gameTime, input);
+            }
+            else if (_phase == RunPhase.Title)
+            {
+                if (input.Start) StartRound();
             }
             else
             {
@@ -1845,7 +1850,10 @@ namespace StoreChase
             DrawCritters(gameTime);
             DrawCustomers(gameTime);
             DrawFx();
-            _hud.Draw(BuildHudState());
+            if (_phase == RunPhase.Title)
+                _hud.DrawTitleScreen(BuildHudState());
+            else
+                _hud.Draw(BuildHudState());
 
 
             base.Draw(gameTime);

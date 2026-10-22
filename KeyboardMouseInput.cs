@@ -14,6 +14,7 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
     private bool _previousThrow;
     private bool _previousUse;
     private readonly bool[] _previousBuy = new bool[ShopSlotCount];
+    private bool _previousStart;
     private bool _mouseCaptured;
 
     /// <summary>How many number keys the shop reads (slots 1..9).</summary>
@@ -118,6 +119,10 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             _previousBuy[i] = down;
         }
 
+        bool startDown = kb.IsKeyDown(Keys.Enter) || kb.IsKeyDown(Keys.Space);
+        bool startPressed = startDown && !_previousStart;
+        _previousStart = startDown;
+
         return new InputState
         {
             Move = move,
@@ -132,6 +137,7 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             Use = usePressed,
             Crouch = kb.IsKeyDown(Keys.LeftControl),
             BuySlot = buySlot,
+            Start = startPressed,
         };
     }
 }

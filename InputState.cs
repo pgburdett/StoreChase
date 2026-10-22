@@ -45,6 +45,9 @@ public readonly struct InputState
     /// world offers on the Use key first). Rising edge.</summary>
     public bool Use { get; init; }
 
+    /// <summary>Start the game / confirm. Rising edge.</summary>
+    public bool Start { get; init; }
+
     /// <summary>True while the player is crouching (stealth).</summary>
     public bool Crouch { get; init; }
 
@@ -69,5 +72,6 @@ public readonly struct InputState
         Exit ||
         Throw ||
         Use ||
+        Start ||
         BuySlot != 0;
 }

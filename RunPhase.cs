@@ -5,6 +5,9 @@ namespace StoreChase;
 // right message without a pile of flags.
 public enum RunPhase
 {
+    /// <summary>Title screen — waiting for the player to start.</summary>
+    Title,
+
     /// <summary>The round is still in progress.</summary>
     Playing,
 

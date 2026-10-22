@@ -217,6 +217,56 @@ public sealed class Hud
         _graphicsDevice.DepthStencilState = DepthStencilState.Default;
     }
 
+    public void DrawTitleScreen(in HudState state)
+    {
+        if (_font == null) return;
+        _spriteBatch.Begin();
+        var vp = _graphicsDevice.Viewport;
+        int cx = vp.Width / 2;
+
+        // Big rainbow title at the top.
+        DrawRainbowTitle(state);
+
+        var font = _font;
+        string subtitle = "A heist in every aisle";
+        var subSize = font.MeasureString(subtitle);
+        _spriteBatch.DrawString(font, subtitle, new Vector2(cx - subSize.X / 2, 90),
+            new Color(180, 180, 190));
+
+        string prompt = "Press Enter to start";
+        var promptSize = font.MeasureString(prompt);
+        float blink = (MathF.Sin(state.TitlePhase * 4f) + 1f) / 2f;
+        var promptColor = Color.Lerp(new Color(120, 120, 130), new Color(245, 235, 160), blink);
+        _spriteBatch.DrawString(font, prompt, new Vector2(cx - promptSize.X / 2, vp.Height / 2 - 20),
+            promptColor);
+
+        // Controls hint.
+        string[] hints = new[]
+        {
+            "WASD move    Mouse look (V first-person)    E use    Click throw",
+            "1-9 shop between rounds    R restart    Esc quit",
+        };
+        int y = vp.Height / 2 + 40;
+        foreach (var h in hints)
+        {
+            var hs = font.MeasureString(h);
+            _spriteBatch.DrawString(font, h, new Vector2(cx - hs.X / 2, y), new Color(120, 120, 135));
+            y += 22;
+        }
+
+        // High score.
+        if (state.Coins > 0 || true)
+        {
+            string hs = $"Coins this run: {state.Coins}";
+            var hss = font.MeasureString(hs);
+            _spriteBatch.DrawString(font, hs, new Vector2(cx - hss.X / 2, vp.Height - 60),
+                new Color(245, 205, 110));
+        }
+
+        _spriteBatch.End();
+        _graphicsDevice.DepthStencilState = DepthStencilState.Default;
+    }
+
     // The objective readout: how much is back, how much is still out, and
     // the timer. This is the whole scoreboard, so it stays in one place.
     private void DrawObjectivePanel(in HudState state)
