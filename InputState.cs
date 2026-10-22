@@ -45,6 +45,9 @@ public readonly struct InputState
     /// world offers on the Use key first). Rising edge.</summary>
     public bool Use { get; init; }
 
+    /// <summary>True while the player is crouching (stealth).</summary>
+    public bool Crouch { get; init; }
+
     /// <summary>Shop slot the player just pressed this frame, 1-based
     /// (0 = none). Only meaningful between rounds, when the shop is open.
     /// Rising edge, so one press buys one item.</summary>

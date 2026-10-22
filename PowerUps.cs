@@ -28,6 +28,12 @@ public enum PowerUpKind
 
     /// <summary>Smoke bomb: panics every cat in earshot for six seconds.</summary>
     SmokeBomb,
+
+    /// <summary>Floor trap: stuns the first cat to step on it.</summary>
+    Trap,
+
+    /// <summary>Laser pointer: a dot cats chase for six seconds.</summary>
+    Laser,
 }
 
 /// <summary>A power-up lying on the floor. Dumb data, like LootItem.</summary>
@@ -57,6 +63,8 @@ public sealed class PowerUpItem
         PowerUpKind.Skates => new Color(120, 190, 240),
         PowerUpKind.Spray => new Color(196, 130, 220),
         PowerUpKind.SmokeBomb => new Color(140, 140, 150),
+        PowerUpKind.Trap => new Color(180, 90, 90),
+        PowerUpKind.Laser => new Color(220, 80, 80),
         _ => new Color(235, 190, 110),
     };
 
@@ -66,6 +74,8 @@ public sealed class PowerUpItem
         PowerUpKind.Skates => "roller skates",
         PowerUpKind.Spray => "spray bottle",
         PowerUpKind.SmokeBomb => "smoke bomb",
+        PowerUpKind.Trap => "floor trap",
+        PowerUpKind.Laser => "laser pointer",
         _ => "bag of treats",
     };
 }

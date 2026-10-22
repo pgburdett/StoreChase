@@ -130,6 +130,7 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             Exit = kb.IsKeyDown(Keys.Escape),
             Throw = throwPressed,
             Use = usePressed,
+            Crouch = kb.IsKeyDown(Keys.LeftControl),
             BuySlot = buySlot,
         };
     }

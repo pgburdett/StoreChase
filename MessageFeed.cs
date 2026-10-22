@@ -54,6 +54,8 @@ public sealed class MessageFeed
             $"{e.Species} gobbled the snack", new Color(245, 205, 130)));
         events.Subscribe<CatBefriendedEvent>(e => Add(
             $"{e.Species} is your friend now!", new Color(150, 220, 160)));
+        events.Subscribe<AchievementUnlockedEvent>(e => Add(
+            $"Achievement: {AchievementName(e.Id)}", new Color(255, 230, 120)));
         events.Subscribe<ShiftEventFiredEvent>(e => Add(e.Kind switch
         {
             ShiftEventKind.Delivery => "Delivery! Fresh stock on the shelves",
@@ -134,5 +136,14 @@ public sealed class MessageFeed
 
             batch.DrawString(font, entry.Text, new Vector2(topRight.X, y), color);
         }
+
     }
+
+    private static string AchievementName(string id) => id switch
+    {
+        "first_win" => "First win",
+        "win" => "Round won",
+        "befriend_one" => "Made a friend",
+        _ => id,
+    };
 }

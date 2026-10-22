@@ -86,6 +86,9 @@ public class Critter
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
+    /// <summary>This cat's name (for the HUD roster and the feed).</summary>
+    public string Name { get; set; } = "";
+
     /// <summary>
     /// How unsure this critter is about where the player is.
     ///

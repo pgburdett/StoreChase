@@ -48,9 +48,11 @@ namespace StoreChase
         // into the same vagueness a shouted warning carries.
         private readonly NoiseSystem _noise = new();
 
+        private readonly ComboSystem _combo = new(ComboSystem.DefaultWindow);
+
         // The securing combo: consecutive secures within a short window
         // multiply the coin payout.
-        private readonly ComboSystem _combo = new(ComboSystem.DefaultWindow);
+        private FriendRoster _roster = null!;
 
         // Security cameras watching the aisles.
         private CameraField _cameras = null!;
@@ -123,6 +125,9 @@ namespace StoreChase
         // is a shoplifter, who can pocket a loose item and make for the
         // exit. Pure state (Customer.cs + CustomerBrain.cs), drawn with the
         // same PersonMesh parts as the player.
+        private readonly List<GridPos> _traps = new();
+        private float _laserTimer;
+        private GridPos _laserCell;
         private readonly List<Customer> _customers = new();
         private PersonPart[] _customerParts = null!;
         private readonly List<GridPos> _exits = new();
@@ -263,6 +268,13 @@ namespace StoreChase
             _title = new RainbowTitle();
 
             new RunStats(EventSystem.Instance);
+            new AchievementTracker(EventSystem.Instance);
+            EventSystem.Instance.Subscribe<CatBefriendedEvent>(e =>
+            {
+                // map species name back to kind — find via profile name match
+                foreach (var k in CritterProfile.AllKinds)
+                    if (CritterProfile.For(k).Name == e.Species) { _roster.Befriend(k); break; }
+            });
 
             // Synthesised up front so the first cue doesn't stutter. Safe to
             // fail: Sfx turns itself off when there's no audio device.
@@ -435,11 +447,16 @@ namespace StoreChase
             // them too or every restart leaks one model per cat.
             _catAnims.Clear();
             _catMeshes.Clear();
+            _roster ??= new FriendRoster(_rng);
             foreach (var cell in SpawnPoints(spec.CritterCount))
             {
                 var profile = CritterProfile.Random(_rng);
                 var ai = new SmartAnimalAI(profile, _rng);
-                _critters.Add(new Critter(cell, CellSize, ai, profile));
+                var critter = new Critter(cell, CellSize, ai, profile);
+                critter.Name = _roster.NameFor(profile.Kind);
+                if (_roster.IsFriend(profile.Kind))
+                    for (int i = 0; i < Critter.FriendThreshold; i++) critter.Feed();
+                _critters.Add(critter);
             }
 
             _items.Spawn(spec.LootCount, _player.Cell);
@@ -462,6 +479,8 @@ namespace StoreChase
             _dayPhase = 0f;
             _rainTimer = 40f + (float)_rng.NextDouble() * 30f;
             _rainActive = 0f;
+            _traps.Clear();
+            _laserTimer = 0f;
             _shift ??= new ShiftEventSystem(_rng);
             _shift.StartRound();
             _combo.Reset();
@@ -845,6 +864,7 @@ namespace StoreChase
             // player freely (camera-relative) with wall sliding.
             bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
             Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
+            _player.IsCrouching = input.Crouch;
             _player.Update(simTime, _map, moveDir, freeMove);
 
             // Walking over a power-up pockets it — if the one slot is free.
@@ -920,6 +940,16 @@ namespace StoreChase
             if (_treatTimer > 0f) _treatTimer -= dt;
             if (_darkTimer > 0f) _darkTimer -= dt;
             if (_ratTimer > 0f) _ratTimer -= dt;
+
+            if (_laserTimer > 0f)
+            {
+                _laserTimer -= dt;
+                if (_rng.NextDouble() < dt * 0.6)
+                {
+                    var cells = _map.WalkableCells().ToList();
+                    if (cells.Count > 0) _laserCell = cells[_rng.Next(cells.Count)];
+                }
+            }
 
             // Day/night cycle: a slow loop that nudges the ambient light.
             _dayPhase = (_dayPhase + dt / 120f) % 1f;
@@ -1061,6 +1091,29 @@ namespace StoreChase
             _customers.RemoveAll(c => c.Escaped);
 
             UpdateCritters(simTime);
+
+            // Floor traps: the first cat to step on one is stunned and drops
+            // whatever it was carrying.
+            for (int i = _traps.Count - 1; i >= 0; i--)
+            {
+                var trap = _traps[i];
+                foreach (var critter in _critters)
+                {
+                    if (critter.Cell != trap) continue;
+                    bool stunned = critter.TryStunFromBall(3f);
+                    if (stunned && critter.Carrying)
+                    {
+                        _items.DropFrom(critter, critter.Cell);
+                        critter.Carrying = false;
+                        _alarm.Ping();
+                    }
+                    Sfx.Play(SfxId.Tackle, volume: 0.5f);
+                    _fx.Burst(critter.WorldPos + new Vector3(0f, 0.6f, 0f),
+                        new Color(180, 90, 90), count: 12, speed: 2f, life: 0.8f, _rng);
+                    _traps.RemoveAt(i);
+                    break;
+                }
+            }
             UpdateLoot(dt);
             UpdateHeartbeat(dt);
             _hud.Update(dt);
@@ -1193,7 +1246,7 @@ namespace StoreChase
             var locus = new CritterLocus(
                 Map: _map,
                 PlayerCell: _player.Cell,
-                Ball: _ballCell ?? (_ratTimer > 0f ? _ratCell : null),
+                Ball: _ballCell ?? (_ratTimer > 0f ? _ratCell : (_laserTimer > 0f ? _laserCell : null)),
                 LootTarget: _lootTarget,
                 LootTargetItem: _lootTargetItem,
                 StolenCount: _items.StolenCount,
@@ -1326,7 +1379,8 @@ namespace StoreChase
             // not blind, so they keep a fraction of their radius. This is
             // the shift's stealth window.
             float vision = critter.Profile.VisionRadius
-                           * (_darkTimer > 0f ? DarkVisionFactor : 1f);
+                           * (_darkTimer > 0f ? DarkVisionFactor : 1f)
+                           * (_player.IsCrouching ? 0.5f : 1f);
             bool couldSee = dist <= vision &&
                             _map.HasLineOfSight(critter.Cell, _player.Cell);
 
@@ -1398,6 +1452,21 @@ namespace StoreChase
                             smoked > 0 ? $"smoke! {smoked} scattered" : "smoke (nobody home)",
                             new Color(200, 200, 210), 1.2f);
                     }
+                    break;
+
+                case PowerUpKind.Trap:
+                    _traps.Add(_player.Cell);
+                    _fx.Burst(_player.WorldPos + new Vector3(0f, 0.2f, 0f),
+                        new Color(180, 90, 90), count: 8, speed: 1.5f, life: 0.7f, _rng);
+                    _fx.Text(_player.WorldPos + new Vector3(0f, 1.6f, 0f),
+                        "trap set", new Color(220, 130, 130), 1.2f);
+                    break;
+
+                case PowerUpKind.Laser:
+                    _laserTimer = 6f;
+                    _laserCell = _player.Cell;
+                    _fx.Text(_player.WorldPos + new Vector3(0f, 1.6f, 0f),
+                        "laser on!", new Color(220, 80, 80), 1.2f);
                     break;
             }
         }
@@ -1719,6 +1788,7 @@ namespace StoreChase
             DrawPowerUps();
             DrawHazards();
             DrawBall();
+            DrawTrapsAndLaser();
             DrawCritters(gameTime);
             DrawCustomers(gameTime);
             DrawFx();
@@ -1915,8 +1985,21 @@ namespace StoreChase
             DrawMesh(_propVerts, world, _textures.Flat, new Color(226, 92, 78));
         }
 
-        /// <summary>
-        /// Draws the procedural humanoid player.
+        private void DrawTrapsAndLaser()
+        {
+            foreach (var trap in _traps)
+            {
+                var w = Matrix.CreateScale(0.6f, 0.15f, 0.6f)
+                      * Matrix.CreateTranslation(trap.X * CellSize, 0.05f, trap.Y * CellSize);
+                DrawMesh(_propVerts, w, _textures.Flat, new Color(180, 90, 90));
+            }
+            if (_laserTimer > 0f)
+            {
+                var w = Matrix.CreateScale(0.25f, 0.25f, 0.25f)
+                      * Matrix.CreateTranslation(_laserCell.X * CellSize, 0.1f, _laserCell.Y * CellSize);
+                DrawMesh(_propVerts, w, _textures.Flat, new Color(220, 80, 80));
+            }
+        }
         ///
         /// The walk cycle is advanced while moving and eased back to neutral
         /// when idle, so limbs don't freeze mid-stride. Each limb swings around

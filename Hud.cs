@@ -259,9 +259,10 @@ public sealed class Hud
         line.Y += step;
         foreach (var critter in state.Critters)
         {
+            string displayName = string.IsNullOrEmpty(critter.Name) ? critter.Profile.Name : critter.Name;
             string flag = critter.Befriended ? "  [friend]"
                 : critter.Carrying ? "  [!] carrying" : "";
-            _spriteBatch.DrawString(font, $"  {critter.Profile.Name}{flag}",
+            _spriteBatch.DrawString(font, $"  {displayName}{flag}",
                 line, critter.Profile.Tint);
             line.Y += step;
         }

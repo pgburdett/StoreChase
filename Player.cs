@@ -52,6 +52,9 @@ namespace StoreChase
         /// </summary>
         public float SpeedMultiplier { get; set; } = 1f;
 
+    /// <summary>When true the player moves at half speed and is harder to spot.</summary>
+    public bool IsCrouching { get; set; }
+
         /// <summary>True while the player is skidding across a spill.</summary>
         public bool Slipping => _slipTimer > 0f;
 
@@ -176,7 +179,7 @@ namespace StoreChase
             {
                 float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
                 float slipBoost = slipping ? SlipSpeedBoost : 1f;
-                _t += dt * MoveSpeed * SpeedMultiplier * slipBoost;
+                _t += dt * MoveSpeed * SpeedMultiplier * slipBoost * (IsCrouching ? 0.5f : 1f);
                 if (_t > 1f) _t = 1f;
 
                 Vector3 fromPos = new(_from.X * _cellSize, 0f, _from.Y * _cellSize);
@@ -220,7 +223,7 @@ namespace StoreChase
 
             Vector2 pos = new(WorldPos.X, WorldPos.Z);
             float slipBoost = slipping ? SlipSpeedBoost : 1f;
-            Vector2 delta = heading * FreeMoveSpeed * SpeedMultiplier * slipBoost * dt;
+            Vector2 delta = heading * FreeMoveSpeed * SpeedMultiplier * slipBoost * (IsCrouching ? 0.5f : 1f) * dt;
 
             Vector2 tryX = new(pos.X + delta.X, pos.Y);
             if (CanStandAt(map, tryX)) pos = tryX;
