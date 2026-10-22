@@ -2028,8 +2028,8 @@ namespace StoreChase
         /// </summary>
         private static Vector3 AmbientForAlarm(float level)
         {
-            var calm = new Vector3(0.5f, 0.5f, 0.55f);
-            var alarmed = new Vector3(0.62f, 0.26f, 0.24f);
+            var calm = new Vector3(0.62f, 0.62f, 0.68f);
+            var alarmed = new Vector3(0.72f, 0.32f, 0.30f);
             return Vector3.Lerp(calm, alarmed, MathHelper.Clamp(level, 0f, 1f));
         }
 
