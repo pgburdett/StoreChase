@@ -50,7 +50,7 @@ public static class Program
             return 0;
         }
 
-        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); LootChecks.Run(); AwarenessChecks.Run(); MinimapChecks.Run(); }
+        if (!anyFlag || onlyGeom) { RunGeometry(); CameraChecks.Run(); LootChecks.Run(); SpeciesChecks.Run(); PowerUpChecks.Run(); HazardChecks.Run(); FxChecks.Run(); MusicChecks.Run(); CampaignChecks.Run(); AwarenessChecks.Run(); MinimapChecks.Run(); WindingChecks.Run(); StoreChecks.Run(); NoiseChecks.Run(); FriendChecks.Run(); ShiftChecks.Run(); CustomerChecks.Run(); }
         if (!anyFlag || onlyRig) RunRigs();
         if (!anyFlag || onlyRounds) RunRounds();
 

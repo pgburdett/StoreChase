@@ -41,6 +41,43 @@ namespace StoreChase
 
         private Point _heldDirection = Point.Zero;
         private bool _wasFreeMove;
+        private float _slipTimer;
+        private Vector2 _momentum = Vector2.Zero;
+
+        /// <summary>
+        /// A multiplier on the player's speed, for timed boosts (roller
+        /// skates). 1 = normal. Applied in both movement modes; deliberately
+        /// NOT part of <see cref="GridSpeed"/>, which describes the base
+        /// walk the alarm scaling is tuned against.
+        /// </summary>
+        public float SpeedMultiplier { get; set; } = 1f;
+
+        /// <summary>True while the player is skidding across a spill.</summary>
+        public bool Slipping => _slipTimer > 0f;
+
+        /// <summary>How fast a slip shoves you along, on top of any boost.</summary>
+        public const float SlipSpeedBoost = 1.35f;
+
+        /// <summary>
+        /// Hits the player with a spill: for the next <paramref name="seconds"/>
+        /// they can't brake (isometric keeps gliding in the last direction
+        /// they walked) and in first person their steering lags. Returns true
+        /// only on the *start* of a slip, so walking around on one spill
+        /// doesn't re-trigger the sound every frame — but re-entering does
+        /// refresh the timer.
+        /// </summary>
+        public bool ApplySlip(float seconds)
+        {
+            if (_slipTimer > 0f)
+            {
+                _slipTimer = MathF.Max(_slipTimer, seconds);
+                return false;
+            }
+
+            _slipTimer = seconds;
+            _momentum = Vector2.Zero;
+            return true;
+        }
 
         /// <summary>True while the player is mid-step between two cells.</summary>
         public bool IsMoving => _t < 1f;
@@ -68,6 +105,9 @@ namespace StoreChase
         /// <param name="freeMove">Selects which interpretation of <paramref name="moveDir"/> applies.</param>
         public void Update(GameTime gameTime, GridMap map, Vector2 moveDir, bool freeMove)
         {
+            // Spills age out regardless of movement mode.
+            if (_slipTimer > 0f) _slipTimer -= (float)gameTime.ElapsedGameTime.TotalSeconds;
+
             if (freeMove != _wasFreeMove)
             {
                 // Returning to the grid: re-anchor to the nearest cell so the
@@ -107,14 +147,19 @@ namespace StoreChase
                 _heldDirection = new Point((int)move.X, (int)move.Y);
 
             bool moving = _t < 1f;
+            bool slipping = _slipTimer > 0f;
 
             if (!moving)
             {
                 Cell = _to;
 
                 // Only start a new tile while the player is actually asking
-                // to move. A tile already under way is always finished.
-                if (hasInput)
+                // to move — unless they're skidding, in which case the last
+                // direction carries them: you cannot brake on a wet floor.
+                // (This is the old "releasing the keys doesn't stop you" bug,
+                // deliberately reinstated as a hazard and bounded by the
+                // slip timer.)
+                if (hasInput || slipping)
                 {
                     var candidate = new GridPos(Cell.X + _heldDirection.X, Cell.Y + _heldDirection.Y);
                     if (map.IsWalkable(candidate.X, candidate.Y))
@@ -130,7 +175,8 @@ namespace StoreChase
             if (moving)
             {
                 float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
-                _t += dt * MoveSpeed;
+                float slipBoost = slipping ? SlipSpeedBoost : 1f;
+                _t += dt * MoveSpeed * SpeedMultiplier * slipBoost;
                 if (_t > 1f) _t = 1f;
 
                 Vector3 fromPos = new(_from.X * _cellSize, 0f, _from.Y * _cellSize);
@@ -152,8 +198,29 @@ namespace StoreChase
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
             if (dir.LengthSquared() > 1f) dir.Normalize();
 
+            // On a spill the heading won't turn on a dime: the requested
+            // direction is blended into a momentum vector, so steering lags
+            // for the length of the slip. Dry floor, momentum tracks the
+            // input exactly (i.e. it isn't there at all).
+            bool slipping = _slipTimer > 0f;
+            Vector2 heading;
+            if (slipping)
+            {
+                if (dir.LengthSquared() < 0.0001f) dir = _momentum; // released mid-slide: keep gliding
+                if (_momentum.LengthSquared() < 0.0001f) _momentum = dir;
+                _momentum = Vector2.Lerp(_momentum, dir, 1f - MathF.Exp(-3f * dt));
+                heading = _momentum;
+                if (heading.LengthSquared() > 1f) heading.Normalize();
+            }
+            else
+            {
+                _momentum = dir;
+                heading = dir;
+            }
+
             Vector2 pos = new(WorldPos.X, WorldPos.Z);
-            Vector2 delta = dir * FreeMoveSpeed * dt;
+            float slipBoost = slipping ? SlipSpeedBoost : 1f;
+            Vector2 delta = heading * FreeMoveSpeed * SpeedMultiplier * slipBoost * dt;
 
             Vector2 tryX = new(pos.X + delta.X, pos.Y);
             if (CanStandAt(map, tryX)) pos = tryX;
@@ -167,8 +234,8 @@ namespace StoreChase
             // Cell pointed at the nearest walkable tile.
             Cell = NearestWalkableCell(map, pos);
 
-            if (dir.LengthSquared() > 0.0001f)
-                FacingAngle = (float)Math.Atan2(dir.X, dir.Y);
+            if (heading.LengthSquared() > 0.0001f)
+                FacingAngle = (float)Math.Atan2(heading.X, heading.Y);
 
             _heldDirection = Point.Zero;
         }

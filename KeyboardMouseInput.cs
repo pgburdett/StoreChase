@@ -12,7 +12,18 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
     private int _previousScrollValue;
     private bool _previousToggle;
     private bool _previousThrow;
+    private bool _previousUse;
+    private readonly bool[] _previousBuy = new bool[ShopSlotCount];
     private bool _mouseCaptured;
+
+    /// <summary>How many number keys the shop reads (slots 1..9).</summary>
+    private const int ShopSlotCount = 9;
+
+    private static readonly Keys[] ShopKeys =
+    {
+        Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6,
+        Keys.D7, Keys.D8, Keys.D9,
+    };
 
     /// <summary>Always <see cref="InputDeviceKind.KeyboardMouse"/>.</summary>
     public InputDeviceKind Kind => InputDeviceKind.KeyboardMouse;
@@ -91,6 +102,22 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
         bool throwPressed = throwNow && !_previousThrow;
         _previousThrow = throwNow;
 
+        // Use: E for the keyboard (F and R are taken; E sits under the left
+        // hand next to WASD). Rising edge, same reason as the others.
+        bool useNow = kb.IsKeyDown(Keys.E);
+        bool usePressed = useNow && !_previousUse;
+        _previousUse = useNow;
+
+        // Shop slots: number keys 1-6, rising edge per key. Only the shop
+        // reads these (between rounds), so a held digit buys once.
+        int buySlot = 0;
+        for (int i = 0; i < ShopSlotCount; i++)
+        {
+            bool down = kb.IsKeyDown(ShopKeys[i]);
+            if (down && !_previousBuy[i]) buySlot = i + 1;
+            _previousBuy[i] = down;
+        }
+
         return new InputState
         {
             Move = move,
@@ -102,6 +129,8 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             Restart = kb.IsKeyDown(Keys.R),
             Exit = kb.IsKeyDown(Keys.Escape),
             Throw = throwPressed,
+            Use = usePressed,
+            BuySlot = buySlot,
         };
     }
 }

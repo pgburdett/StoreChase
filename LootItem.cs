@@ -54,6 +54,9 @@ public sealed class LootItem
     /// <summary>The critter currently carrying it, if any.</summary>
     public Critter? Carrier { get; set; }
 
+    /// <summary>The customer currently carrying it, if any (shoplifter).</summary>
+    public Customer? CustomerCarrier { get; set; }
+
     /// <summary>Seconds since the player last picked it up, used for the
     /// "dropped just now" hint.</summary>
     public float AgeSeconds { get; set; }

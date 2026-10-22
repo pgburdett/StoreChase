@@ -79,12 +79,24 @@ public class AlarmSystem
     /// <summary>Raised when the cause changes (e.g. from Calm to Thief).</summary>
     public event Action<AlarmCause>? Changed;
 
+    /// <summary>
+    /// Multiplies the decay rate only, not the rise rates. This is how the
+    /// Calm nerves upgrade expresses itself: the alarm still climbs at the
+    /// rates the round simulation tuned, but it bleeds off faster between
+    /// scares. Kept separate from <see cref="RateScale"/> because scaling
+    /// both would make a bigger store easier, not just a calmer player.
+    /// </summary>
+    public float DecayMultiplier { get; set; } = 1f;
+
     /// <summary>Resets the meter to zero and clears the cause.</summary>
     public void Reset()
     {
         Level = 0f;
         _grace = 0f;
         Cause = AlarmCause.Calm;
+        // Upgrades re-apply this in StartRound; Reset restores the plain
+        // rate so a headless test never inherits a campaign's modifiers.
+        DecayMultiplier = 1f;
     }
 
     /// <summary>
@@ -139,7 +151,7 @@ public class AlarmSystem
                 Level += PlayerCarryingRate * RateScale * dt;
                 break;
             default:
-                Level -= DecayRate * RateScale * dt;
+                Level -= DecayRate * RateScale * DecayMultiplier * dt;
                 break;
         }
 
@@ -166,6 +178,16 @@ public class AlarmSystem
     public void Spike(float amount)
     {
         Level = MathHelper.Clamp(Level + amount, 0f, 1f);
+    }
+
+    /// <summary>
+    /// Drops the meter by a fixed amount, immediately (the manager's audit;
+    /// the mirror of <see cref="Spike"/>). Clamped at empty.
+    /// </summary>
+    /// <param name="amount">How much to subtract. Usually a fraction of the meter.</param>
+    public void Drain(float amount)
+    {
+        Level = MathHelper.Clamp(Level - amount, 0f, 1f);
     }
 }
 

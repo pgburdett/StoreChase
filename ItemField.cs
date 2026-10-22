@@ -135,6 +135,15 @@ public class ItemField
         ItemStolen?.Invoke(item);
     }
 
+    /// <summary>Transfers an item to a customer's possession (shoplifting).</summary>
+    public void TakeByCustomer(LootItem item, Customer carrier)
+    {
+        item.State = LootState.Carried;
+        item.CustomerCarrier = carrier;
+        item.AgeSeconds = 0f;
+        ItemStolen?.Invoke(item);
+    }
+
     /// <summary>
     /// Tackling: whatever the critter had goes on the floor where it stood.
     /// The critter is released by Game1, not here. A drop on a counter cell is
@@ -156,6 +165,31 @@ public class ItemField
 
         carried.State = LootState.Loose;
         carried.Carrier = null;
+        carried.Cell = where;
+        carried.WorldPos = CellCenter(where);
+        carried.AgeSeconds = 0f;
+        ItemDropped?.Invoke(carried);
+    }
+
+    /// <summary>
+    /// A shoplifter caught (or dropping): whatever the customer had goes on the
+    /// floor where they stood. A drop on a counter cell is secured, so a
+    /// shoplifter caught at the till still counts as stopped.
+    /// </summary>
+    public void DropFromCustomer(Customer carrier, GridPos where)
+    {
+        var carried = _items.FirstOrDefault(i => i.CustomerCarrier == carrier && i.State == LootState.Carried);
+        if (carried == null) return;
+
+        if (_map.IsCounter(where.X, where.Y))
+        {
+            Secured(carried, where);
+            carried.CustomerCarrier = null;
+            return;
+        }
+
+        carried.State = LootState.Loose;
+        carried.CustomerCarrier = null;
         carried.Cell = where;
         carried.WorldPos = CellCenter(where);
         carried.AgeSeconds = 0f;
@@ -265,6 +299,12 @@ public class ItemField
                 case LootState.Carried when item.Carrier != null:
                 {
                     Vector3 basePos = item.Carrier.WorldPos + new Vector3(0f, carryHeight, 0f);
+                    item.WorldPos = basePos + new Vector3(0f, MathF.Sin(item.AgeSeconds * 6f) * 0.06f, 0f);
+                    break;
+                }
+                case LootState.Carried when item.CustomerCarrier != null:
+                {
+                    Vector3 basePos = item.CustomerCarrier.WorldPos + new Vector3(0f, carryHeight, 0f);
                     item.WorldPos = basePos + new Vector3(0f, MathF.Sin(item.AgeSeconds * 6f) * 0.06f, 0f);
                     break;
                 }

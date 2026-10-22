@@ -19,6 +19,19 @@ public enum CritterKind
     /// <summary>Freezes when you look straight at it, bolts the moment you
     /// look away. Turn on the first-person camera to corner one.</summary>
     Nervous,
+
+    /// <summary>Picks its moment: won't shoplift while you're watching, and
+    /// bolts hard the moment it has something. The cheap tins, too — it knows
+    /// what the alarm notices.</summary>
+    Burglar,
+
+    /// <summary>Enormous, slow, and completely unbothered by a thrown ball.
+    /// It takes whatever it fancies, slowly. Tackle it or corner it.</summary>
+    Moggy,
+
+    /// <summary>The fastest thing in the store. Low patience for thieving and
+    /// high panic, so it grab-and-go rather than planning a heist.</summary>
+    Mouser,
 }
 
 // Everything that makes one cat behave differently from another, in one
@@ -45,6 +58,16 @@ public sealed record CritterProfile
     /// <summary>How far the cat can see (for line-of-sight checks).</summary>
     public required int VisionRadius { get; init; }
 
+    /// <summary>
+    /// How far the cat *hears* a plain footstep, in cells.
+    ///
+    /// Scaled by the noise's loudness, so skids and crashes carry further
+    /// (see <see cref="NoiseSystem"/>). This is what gives each species a
+    /// stealth profile: sneaking past a napping Moggy works, tiptoeing past
+    /// a Mouser does not.
+    /// </summary>
+    public float HearingRadius { get; init; } = 5f;
+
     // Planning.
     /// <summary>Seconds between escape-route replans.</summary>
     public required float ReplanInterval { get; init; }
@@ -60,6 +83,33 @@ public sealed record CritterProfile
 
     /// <summary>Ignores a thrown ball.</summary>
     public required bool IgnoresBall { get; init; }
+
+    /// <summary>
+    /// How much of a ball's stun this species keeps, as a multiplier.
+    ///
+    /// 1 = normal, 0.5 = shrugs it off twice as fast, 0 = immune: the ball
+    /// bounces off its head and it just gets annoyed (see
+    /// <see cref="Critter.TryStunFromBall"/>). This is the difference
+    /// between " distraction tool" and "this one has to be cornered".
+    /// </summary>
+    public float StunDurationFactor { get; init; } = 1f;
+
+    /// <summary>
+    /// Won't take loot while the player is watching it.
+    ///
+    /// Makes the camera a two-way tool: pinning a Nervous cat freezes it,
+    /// and pinning a Burglar stops it mid-shoplift. The AI checks this
+    /// before every steal, not just the initial grab.
+    /// </summary>
+    public bool Sneaky { get; init; }
+
+    /// <summary>
+    /// Speed multiplier while carrying stolen goods.
+    ///
+    /// The getaway gear: a cat with this doesn't just keep its usual pace
+    /// once it has something, it sprints for the till.
+    /// </summary>
+    public float CarrySpeedBoost { get; init; } = 1f;
 
     /// <summary>
     /// What this species is after.
@@ -118,6 +168,7 @@ public sealed record CritterProfile
             AlertRadius = 8,
             FleeRadius = 5,
             VisionRadius = 9,
+            HearingRadius = 5f,
             ReplanInterval = 0.6f,
             QuirkChance = 0.15f,
             ThiefDrive = 0.95f,
@@ -139,6 +190,8 @@ public sealed record CritterProfile
             AlertRadius = 10,
             FleeRadius = 7,
             VisionRadius = 11,
+            // Young and twitchy: hears nearly as far as it sees.
+            HearingRadius = 6f,
             // No patience: it re-decides constantly and jukes far more often.
             ReplanInterval = 0.25f,
             QuirkChance = 0.45f,
@@ -161,6 +214,8 @@ public sealed record CritterProfile
             AlertRadius = 4,
             FleeRadius = 2,
             VisionRadius = 5,
+            // Asleep on the job. You can walk past this one at a stroll.
+            HearingRadius = 2f,
             ReplanInterval = 1.2f,
             QuirkChance = 0.05f,
             ThiefDrive = 0.25f,
@@ -174,6 +229,81 @@ public sealed record CritterProfile
             IdlePose = CatPose.Loaf,
         },
 
+        CritterKind.Burglar => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Burglar Cat",
+            MoveSpeed = 4.4f,
+            AlertRadius = 9,
+            FleeRadius = 7,
+            VisionRadius = 11,
+            // A working predator: hears footsteps through the aisles.
+            HearingRadius = 5f,
+            ReplanInterval = 0.45f,
+            QuirkChance = 0.35f,
+            ThiefDrive = 0.85f,
+            FreezesWhenWatched = false,
+            IgnoresBall = false,
+            // Won't shoplift in front of you: watching it actually stops it.
+            Sneaky = true,
+            // And once it has something it is gone.
+            CarrySpeedBoost = 1.4f,
+            // Takes the tins: low value, so the alarm barely notices.
+            PreferredKind = LootKind.Canned,
+            UnpreferredThiefFactor = 0.25f,
+            Scale = 0.95f,
+            Tint = new Color(168, 144, 118),
+            IdlePose = CatPose.Stand,
+        },
+
+        CritterKind.Moggy => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Moggy",
+            MoveSpeed = 2.0f,
+            AlertRadius = 3,
+            FleeRadius = 2,
+            VisionRadius = 5,
+            // Hard of hearing to match: it sleeps through the aisles.
+            HearingRadius = 1f,
+            ReplanInterval = 1.4f,
+            QuirkChance = 0.05f,
+            ThiefDrive = 0.6f,
+            FreezesWhenWatched = false,
+            // The ball bounces off. All of it: no stun, just indignation.
+            IgnoresBall = true,
+            StunDurationFactor = 0f,
+            // Slowly develops a taste for anything.
+            PreferredKind = LootKind.Boxed,
+            UnpreferredThiefFactor = 0.45f,
+            Scale = 1.45f,
+            Tint = new Color(126, 116, 110),
+            IdlePose = CatPose.Loaf,
+        },
+
+        CritterKind.Mouser => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Mouser",
+            MoveSpeed = 6.0f,
+            AlertRadius = 12,
+            FleeRadius = 8,
+            VisionRadius = 12,
+            // The fastest thing in the store, and the sharpest ears.
+            HearingRadius = 7f,
+            ReplanInterval = 0.3f,
+            QuirkChance = 0.5f,
+            ThiefDrive = 0.55f,
+            FreezesWhenWatched = false,
+            IgnoresBall = false,
+            // Grab-and-run: the light bags and not much interest in the rest.
+            PreferredKind = LootKind.Bagged,
+            UnpreferredThiefFactor = 0.15f,
+            Scale = 0.8f,
+            Tint = new Color(238, 190, 116),
+            IdlePose = CatPose.Stretch,
+        },
+
         _ => new CritterProfile
         {
             Kind = CritterKind.Nervous,
@@ -182,6 +312,8 @@ public sealed record CritterProfile
             AlertRadius = 7,
             FleeRadius = 6,
             VisionRadius = 12,
+            // Jumpy: hears a footstep nearly as far as it can see one.
+            HearingRadius = 6f,
             ReplanInterval = 0.4f,
             QuirkChance = 0.3f,
             ThiefDrive = 0.8f,
@@ -203,6 +335,9 @@ public sealed record CritterProfile
         CritterKind.Kitten,
         CritterKind.LoungeLizard,
         CritterKind.Nervous,
+        CritterKind.Burglar,
+        CritterKind.Moggy,
+        CritterKind.Mouser,
     };
 
     /// <summary>Returns a random species profile.</summary>

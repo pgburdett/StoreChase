@@ -60,6 +60,82 @@ public sealed class ItemSecuredEvent : BaseEvent
 {
 }
 
+// Published when the player walks over a power-up (it goes in the pocket).
+public sealed class PowerUpCollectedEvent : BaseEvent
+{
+    public PowerUpKind Kind { get; }
+
+    public PowerUpCollectedEvent(PowerUpKind kind) => Kind = kind;
+}
+
+// Published when a pocketed power-up fires.
+public sealed class PowerUpUsedEvent : BaseEvent
+{
+    public PowerUpKind Kind { get; }
+
+    public PowerUpUsedEvent(PowerUpKind kind) => Kind = kind;
+}
+
+// Published when the player's feet find a wet floor.
+public sealed class PlayerSlippedEvent : BaseEvent
+{
+}
+
+// Published when the player pulls the fire alarm. Carries how many cats
+// were caught in the panic — "three cats scattered!" is the whole story of
+// that button press.
+public sealed class FireAlarmPulledEvent : BaseEvent
+{
+    public int Scattered { get; }
+
+    public FireAlarmPulledEvent(int scattered) => Scattered = scattered;
+}
+
+// Published when a cat eats a treat the player dropped. Feeding is the
+// friendship mechanic: two snacks and the cat is yours for the round.
+public sealed class CatFedEvent : BaseEvent
+{
+    public string Species { get; }
+
+    public CatFedEvent(string species) => Species = species;
+}
+
+// Published when a treat crosses a cat into friendship: it stops stealing
+// and starts following the player for the rest of the round.
+public sealed class CatBefriendedEvent : BaseEvent
+{
+    public string Species { get; }
+
+    public CatBefriendedEvent(string species) => Species = species;
+}
+
+// Published when the shift itself interrupts: a delivery, a power cut, the
+// manager's audit, a rat. The scheduling is pure (ShiftEvents.cs); this is
+// the moment it lands, so the feed and the stats can talk about it.
+public sealed class ShiftEventFiredEvent : BaseEvent
+{
+    public ShiftEventKind Kind { get; }
+
+    public ShiftEventFiredEvent(ShiftEventKind kind) => Kind = kind;
+}
+
+// Published when the player buys (or tries to buy) something in the
+// between-rounds shop. The result distinguishes the three things worth
+// saying out loud: it's yours, you can't afford it, it's already maxed.
+public sealed class ShopPurchaseEvent : BaseEvent
+{
+    public string ItemName { get; }
+    public int Cost { get; }
+    public BuyResult Result { get; }
+
+    public ShopPurchaseEvent(string itemName, int cost, BuyResult result)
+    {
+        ItemName = itemName;
+        Cost = cost;
+        Result = result;
+    }
+}
+
 /// <summary>
 /// A thread-safe publish/subscribe event bus. Game1 publishes gameplay events
 /// (game started, won, lost, item stolen/secured); subscribers like RunStats

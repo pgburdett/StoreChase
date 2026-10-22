@@ -40,6 +40,21 @@ public class RunStats
         events.Subscribe<GameWonEvent>(OnGameWon);
         events.Subscribe<GameLostEvent>(OnGameLost);
         events.Subscribe<ItemStolenEvent>(OnItemStolen);
+        events.Subscribe<ShiftEventFiredEvent>(OnShiftEvent);
+        events.Subscribe<CatBefriendedEvent>(_ => Befriendings++);
+    }
+
+    /// <summary>How many cats have been fed into friendship this run.</summary>
+    public int Befriendings { get; private set; }
+
+    /// <summary>Shift events fired this run, by kind (for frequency tuning).</summary>
+    public Dictionary<ShiftEventKind, int> ShiftEvents { get; } = new();
+
+    private void OnShiftEvent(ShiftEventFiredEvent e)
+    {
+        ShiftEvents.TryGetValue(e.Kind, out int n);
+        ShiftEvents[e.Kind] = n + 1;
+        Console.WriteLine($"[RunStats] Shift event: {e.Kind}.");
     }
 
     private void OnGameStarted(GameStartedEvent e) => RunsStarted++;

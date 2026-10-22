@@ -20,17 +20,32 @@ namespace StoreChase;
 public static class StoreTextures
 {
     // Tile edge length in texels. 128 is a good middle ground: enough detail
-    // for shelf slats, few enough texels that the floor's mip chain is cheap.
+    // for steel striations and stone chips, few enough texels that the floor's
+    // mip chain is cheap.
     private const int TileSize = 128;
+
+    /// <summary>
+    /// The Unit atlas's white band starts at this v: everything from here up
+    /// is pure white, and faces that want an untinted vertex color (products,
+    /// shelf lips, aisle signs) UV into the band so the texture multiplies to
+    /// 1 and the color shows through clean. ShelfMesh mirrors this constant.
+    /// </summary>
+    public const float WhiteBandStart = 0.75f;
 
     /// <summary>A complete set of the store's procedurally generated textures.</summary>
     public sealed class Set : IDisposable
     {
-        /// <summary>Floor tiles with grout lines.</summary>
+        /// <summary>Floor terrazzo: pale slabs, stone chips, grout on the cell grid.</summary>
         public Texture2D Floor { get; init; } = null!;
 
-        /// <summary>Shelf boards with shadow gaps and a lit lip.</summary>
-        public Texture2D Shelf { get; init; } = null!;
+        /// <summary>
+        /// The shelf-unit atlas: brushed steel below <see cref="WhiteBandStart"/>,
+        /// a pure-white tint band above it (see ShelfMesh).
+        /// </summary>
+        public Texture2D Unit { get; init; } = null!;
+
+        /// <summary>Painted plaster with a baseboard, for the store's border ring.</summary>
+        public Texture2D Wall { get; init; } = null!;
 
         /// <summary>Cardboard box face for loot.</summary>
         public Texture2D Cardboard { get; init; } = null!;
@@ -48,7 +63,8 @@ public static class StoreTextures
         public void Dispose()
         {
             Floor?.Dispose();
-            Shelf?.Dispose();
+            Unit?.Dispose();
+            Wall?.Dispose();
             Cardboard?.Dispose();
             Counter?.Dispose();
             Flat?.Dispose();
@@ -61,7 +77,8 @@ public static class StoreTextures
         return new Set
         {
             Floor = BuildMipmapped(device, TileSize, MakeFloor),
-            Shelf = BuildMipmapped(device, TileSize, MakeShelf),
+            Unit = BuildMipmapped(device, TileSize, MakeUnit),
+            Wall = BuildMipmapped(device, TileSize, MakeWall),
             Cardboard = BuildMipmapped(device, TileSize / 2, MakeCardboard),
             Counter = BuildMipmapped(device, TileSize / 2, MakeCounter),
             Flat = BuildMipmapped(device, 4, (x, y, _, _) => Color.White),
@@ -74,47 +91,108 @@ public static class StoreTextures
     // is why the patterns are built from periodic distances rather than from
     // one-sided ramps (see WrapDistance).
 
-    // Store floor: large pale tiles with a darker grout line between them, plus
-    // a fine speckle so the flat expanse doesn't look like plastic under the
-    // ceiling lights.
+    // Store floor: terrazzo. A pale stone slab with colored chips scattered
+    // through it and a grout ring around each tile edge — one tile per
+    // texture period, and the floor is drawn one period per grid cell, so the
+    // grout lands exactly on cell boundaries (the floor quad is drawn offset
+    // half a cell for this; see Game1.Draw).
     private static Color MakeFloor(float x, float y, int w, int h)
     {
-        const float groutFraction = 0.06f;
+        const float groutFraction = 0.05f;
         float dEdge = MathF.Min(WrapDistance(x), WrapDistance(y));
 
-        Color tile = new(148, 148, 154);
-        Color grout = new(96, 96, 104);
+        // Slab + fine noise.
+        Color tile = Speckle(new Color(206, 203, 196), x, y, w, h, 9091u, 0.035f);
 
-        // Smooth the grout edge a little so mip levels don't shimmer.
+        // Chips: a hashed dot per cell of a 24x24 lattice. The neighbourhood
+        // scan and the wrapped lattice indices are what let a dot straddle
+        // the tile seam without the pattern tearing (StoreChecks compares
+        // texels either side of x=0 against each other).
+        const int grid = 24;
+        float cx = x * grid, cy = y * grid;
+        int ix = (int)MathF.Floor(cx), iy = (int)MathF.Floor(cy);
+
+        Color[] palette =
+        {
+            new(72, 72, 78),      // charcoal
+            new(172, 84, 70),     // brick red
+            new(226, 208, 168),   // cream
+            new(98, 118, 146),    // slate blue
+            new(130, 150, 116),   // sage
+        };
+
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int hx = ix + dx, hy = iy + dy;
+                int wx = ((hx % grid) + grid) % grid;
+                int wy = ((hy % grid) + grid) % grid;
+                uint n = Hash((uint)wx, (uint)wy, 4711u);
+                if (n % 10u < 3u) continue; // some cells stay empty
+
+                // Dot centre inside its lattice cell, and its radius.
+                float px = hx + 0.3f + ((n >> 8) & 0xFF) / 255f * 0.4f;
+                float py = hy + 0.3f + ((n >> 16) & 0xFF) / 255f * 0.4f;
+                float r = 0.10f + ((n >> 24) & 0x3F) / 63f * 0.14f;
+
+                float ddx = cx - px, ddy = cy - py;
+                if (ddx * ddx + ddy * ddy <= r * r)
+                    tile = palette[(n >> 4) % (uint)palette.Length];
+            }
+        }
+
+        // Grout ring around every tile edge, softened so mips don't shimmer.
         float edge = MathHelper.Clamp(dEdge / groutFraction - 0.5f, 0f, 1f);
-        Color c = Color.Lerp(grout, tile, edge * edge * (3f - 2f * edge));
-
-        return Speckle(c, x, y, w, h, 9091u, 0.05f);
+        return Color.Lerp(new Color(124, 121, 114), tile, edge * edge * (3f - 2f * edge));
     }
 
-    // A shelf unit: stacked boards with dark shadow gaps between them, a
-    // highlight along the front lip of each board, and a vertical divider.
-    private static Color MakeShelf(float x, float y, int w, int h)
+    // The shelf unit's atlas. Brushed steel (vertical striations, a panel
+    // seam) for everything structural, and a pure-white band above
+    // WhiteBandStart for the faces whose vertex color must show through
+    // untinted. Deliberately NOT a picture of a shelf anymore: the shelf is
+    // real geometry now (ShelfMesh), and this only has to dress it.
+    private static Color MakeUnit(float x, float y, int w, int h)
     {
-        const float boards = 3f;
-        // Position within the current board, 0..1, and the board index.
-        float scaled = y * boards;
-        float within = scaled - MathF.Floor(scaled);
+        if (y >= WhiteBandStart)
+            return Color.White; // exact: tint faces sample here.
 
-        Color back = new(58, 56, 62);          // shadowed interior
-        Color board = new(122, 96, 72);        // the board face
-        Color lip = new(158, 128, 96);         // front edge catching the light
+        // Two scales of column hash = brushed vertical grain.
+        uint col = (uint)(int)(x * w);
+        float fine = Hash01(col, 3u, 0x5EE1u);
+        float wide = Hash01(col / 3u, 7u, 0x5EE1u);
+        Color steel = Color.Lerp(
+            new Color(150, 153, 161), new Color(194, 197, 205), 0.55f * fine + 0.45f * wide);
 
-        Color c;
-        if (within < 0.12f) c = back;          // gap above each board
-        else if (within < 0.88f) c = board;
-        else c = lip;                          // thin lit lip at the bottom
+        // A panel seam halfway through the period so uprights read as panels.
+        float seam = WrapDistance(y * 2f);
+        if (seam < 0.015f)
+            steel = Color.Lerp(new Color(114, 117, 124), steel, seam / 0.015f);
 
-        // A vertical support post roughly every half tile.
-        float post = WrapDistance(x - 0.5f);
-        if (post < 0.035f) c = Color.Lerp(new Color(78, 78, 86), c, within < 0.12f ? 0.2f : 0.75f);
+        return Speckle(steel, x, y, w, h, 31337u, 0.03f);
+    }
 
-        return Speckle(c, x, y, w, h, 4242u, 0.06f);
+    // The store's border ring: painted plaster with block courses and a
+    // darker baseboard along the bottom, so the edge of the map reads as
+    // building rather than as more shelving.
+    private static Color MakeWall(float x, float y, int w, int h)
+    {
+        Color plaster = Speckle(new Color(198, 190, 177), x, y, w, h, 5555u, 0.04f);
+
+        // Faint courses every quarter tile.
+        float course = WrapDistance(y * 4f);
+        if (course < 0.025f)
+            plaster = Color.Lerp(new Color(178, 171, 159), plaster, course / 0.025f);
+
+        // Baseboard: the bottom eighth, darker, with a soft top edge.
+        if (y < 0.14f)
+        {
+            Color board = Speckle(new Color(120, 112, 100), x, y, w, h, 8080u, 0.05f);
+            float t = MathHelper.Clamp((y - 0.11f) / 0.03f, 0f, 1f);
+            return Color.Lerp(board, plaster, t * t * (3f - 2f * t));
+        }
+
+        return plaster;
     }
 
     // Loot: a cardboard box face, with a taped seam across the middle and a
@@ -152,6 +230,20 @@ public static class StoreTextures
         return Speckle(c, x, y, w, h, 3131u, 0.04f);
     }
 
+    // ---- Test hooks -------------------------------------------------------
+    // The painters are pure functions of tile coordinates, so the harness can
+    // check grout placement, chip wrapping and the white-band contract with
+    // no GraphicsDevice anywhere (StoreChecks).
+
+    /// <summary>One floor texel at normalized tile coords (headless).</summary>
+    public static Color SampleFloor(float x, float y) => MakeFloor(x, y, TileSize, TileSize);
+
+    /// <summary>One unit-atlas texel at normalized tile coords (headless).</summary>
+    public static Color SampleUnit(float x, float y) => MakeUnit(x, y, TileSize, TileSize);
+
+    /// <summary>One wall texel at normalized tile coords (headless).</summary>
+    public static Color SampleWall(float x, float y) => MakeWall(x, y, TileSize, TileSize);
+
     // ---- Helpers ----------------------------------------------------------
 
     // Shortest distance from t to the tile edge, in tile units. Using the
@@ -188,6 +280,10 @@ public static class StoreTextures
         h ^= h >> 15;
         return h * 0xC2B2AE3Du;
     }
+
+    // Hash folded to 0..1, for chip placement and grain.
+    private static float Hash01(uint x, uint y, uint seed) =>
+        (Hash(x, y, seed) & 0xFFFF) / 65535f;
 
     // Box-filters every mip level down to 1x1, filling the whole chain. See
     // the class comment for why an incomplete chain is not an option.

@@ -42,6 +42,46 @@ public sealed class MessageFeed
             "Item secured!", new Color(96, 176, 112)));
         events.Subscribe<GameStartedEvent>(_ => Add(
             "New round!", Color.White));
+        events.Subscribe<PowerUpCollectedEvent>(e => Add(
+            $"Picked up {PowerUpItem.Name(e.Kind)}", new Color(150, 200, 240)));
+        events.Subscribe<PowerUpUsedEvent>(e => Add(
+            $"Used {PowerUpItem.Name(e.Kind)}!", new Color(200, 160, 240)));
+        events.Subscribe<PlayerSlippedEvent>(_ => Add(
+            "Slippery!", new Color(140, 190, 240)));
+        events.Subscribe<FireAlarmPulledEvent>(e => Add(
+            $"Fire alarm! {e.Scattered} cat(s) scattered!", new Color(255, 140, 90)));
+        events.Subscribe<CatFedEvent>(e => Add(
+            $"{e.Species} gobbled the snack", new Color(245, 205, 130)));
+        events.Subscribe<CatBefriendedEvent>(e => Add(
+            $"{e.Species} is your friend now!", new Color(150, 220, 160)));
+        events.Subscribe<ShiftEventFiredEvent>(e => Add(e.Kind switch
+        {
+            ShiftEventKind.Delivery => "Delivery! Fresh stock on the shelves",
+            ShiftEventKind.PowerCut => "Power cut - the cats can't see you",
+            ShiftEventKind.AlarmAudit => "Manager's audit - the alarm drained",
+            _ => "Rat! Every cat for itself",
+        }, e.Kind switch
+        {
+            ShiftEventKind.Delivery => new Color(180, 210, 240),
+            ShiftEventKind.PowerCut => new Color(150, 160, 190),
+            ShiftEventKind.AlarmAudit => new Color(150, 220, 160),
+            _ => new Color(220, 140, 120),
+        }));
+        events.Subscribe<ShopPurchaseEvent>(e =>
+        {
+            switch (e.Result)
+            {
+                case BuyResult.Bought:
+                    Add($"Bought {e.ItemName} (-{e.Cost}c)", new Color(240, 200, 90));
+                    break;
+                case BuyResult.Maxed:
+                    Add($"{e.ItemName} is maxed out", new Color(170, 170, 180));
+                    break;
+                default:
+                    Add($"Not enough coins for {e.ItemName}", new Color(170, 170, 180));
+                    break;
+            }
+        });
     }
 
     /// <summary>Adds a new message to the bottom of the feed.</summary>

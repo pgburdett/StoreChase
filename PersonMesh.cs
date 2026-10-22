@@ -93,16 +93,32 @@ namespace StoreChase
             // never samples the store's surface textures. Every face points at
             // the middle of the flat white 1x1 (see StoreTextures.Flat), so the
             // player is shaded entirely by its vertex color as before.
-            var white = new Vector2(0.5f, 0.5f);
-
             void Face(Vector3 normal, Vector3 a, Vector3 b, Vector3 c, Vector3 d)
             {
-                v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
-                v.Add(new VertexPositionNormalColorTexture(b, normal, color, white));
-                v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
-                v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
-                v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
-                v.Add(new VertexPositionNormalColorTexture(d, normal, color, white));
+                // Wound at build time (see CubeMesh.Build's Face): the game
+                // culls any triangle whose cross(v1-v0, v2-v0) · normal is not
+                // negative, and hand-ordered corners had four of the person's
+                // six faces backwards — the player rendered as a hollow shell
+                // you could see straight through.
+                var white = new Vector2(0.5f, 0.5f);
+                if (Vector3.Dot(Vector3.Cross(b - a, c - a), normal) < 0f)
+                {
+                    v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(b, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(d, normal, color, white));
+                }
+                else
+                {
+                    v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(b, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(a, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(d, normal, color, white));
+                    v.Add(new VertexPositionNormalColorTexture(c, normal, color, white));
+                }
             }
 
             Face(Vector3.Backward, p000, p010, p110, p100); // front (-Z)

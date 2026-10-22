@@ -77,16 +77,21 @@ public static class CameraChecks
                 float cz = center.Z;
 
                 // The visible rectangle is centred on the focus point. It has
-                // to sit entirely inside the store: the left and near edges
-                // must not go past 0, and the right and far edges must not go
-                // past the store's far corner.
+                // to sit entirely inside the store — which spans
+                // [-cellSize/2, mapWorld - cellSize/2] on both axes: grid
+                // cells anchor at cell * cellSize and extend half a cell past
+                // it, and both the floor draw and the camera's clamp work in
+                // that frame (Game1.FloorWorld, Camera's map origin).
                 float halfW = viewWidth / 2f;
                 float halfH = viewHeight / 2f;
+                float minEdge = -cellSize * 0.5f;
+                float maxW = mapW - cellSize * 0.5f;
+                float maxH = mapH - cellSize * 0.5f;
 
-                float over = Math.Max(0f, halfW - cx)          // past the left edge
-                           + Math.Max(0f, cx + halfW - mapW)   // past the right edge
-                           + Math.Max(0f, halfH - cz)          // past the near edge
-                           + Math.Max(0f, cz + halfH - mapH);  // past the far edge
+                float over = Math.Max(0f, minEdge + halfW - cx)   // past the left edge
+                           + Math.Max(0f, cx + halfW - maxW)      // past the right edge
+                           + Math.Max(0f, minEdge + halfH - cz)   // past the near edge
+                           + Math.Max(0f, cz + halfH - maxH);     // past the far edge
 
                 if (over > 0.01f) { staysInside = false; worst = Math.Max(worst, over); }
             }

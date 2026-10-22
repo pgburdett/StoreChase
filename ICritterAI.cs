@@ -84,7 +84,35 @@ public record struct CritterContext(
     /// A cat that has lost sight of the player but knows roughly where they
     /// were will head for that spot rather than wandering off.
     /// </summary>
-    GridPos? LastSeenPlayerCell
+    GridPos? LastSeenPlayerCell,
+
+    /// <summary>
+    /// Cell of a dropped treat, if one exists.
+    ///
+    /// Like the ball, but louder: several cats will break off what they are
+    /// doing to converge on it. A cat in the middle of an escape still
+    /// ignores it — a thief that abandons the loot because of a snack is a
+    /// mechanic, not a cat.
+    /// </summary>
+    GridPos? Treat = null,
+
+    /// <summary>
+    /// Seconds left of panic (from a spray bottle).
+    ///
+    /// A panicking cat flees the player regardless of its own radii and
+    /// ignores the merchandise. It is the player's way to clear a crowded
+    /// aisle without hurting anyone's loot.
+    /// </summary>
+    float Panic = 0f,
+
+    /// <summary>
+    /// Whether this cat has been fed into friendship (two treats — see
+    /// <see cref="Critter.FriendThreshold"/>).
+    ///
+    /// A friend is neither a thief nor prey: it never steals, and it
+    /// shadows the player around the store instead.
+    /// </summary>
+    bool Befriended = false
 );
 
 /// <summary>
@@ -110,6 +138,14 @@ public interface ICritterAI
     /// transfer. Splitting it this way keeps possession rules out of the AI.
     /// </summary>
     bool WantsToSteal { get; }
+
+    /// <summary>
+    /// True when the AI wants the dropped treat underfoot — it is standing
+    /// on it and eating is what it wants right now. Set by DecideNextMove;
+    /// the game performs the feed (friendship points, consuming the treat),
+    /// same split as stealing.
+    /// </summary>
+    bool WantsTreat { get; }
 
     /// <summary>What the AI wants the body to be doing, for the animation rig.</summary>
     CatPose Pose { get; }

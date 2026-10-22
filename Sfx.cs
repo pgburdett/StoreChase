@@ -43,6 +43,21 @@ public enum SfxId
 
     /// <summary>A cat is nearby (proximity cue).</summary>
     Heartbeat,
+
+    /// <summary>The player uses a power-up (the generic "you got a thing").</summary>
+    PowerUp,
+
+    /// <summary>The spray bottle fires — a pressurised hiss.</summary>
+    Hiss,
+
+    /// <summary>Foot finds wet floor: a descending skid.</summary>
+    Slip,
+
+    /// <summary>The fire alarm is pulled: two-tone ringing.</summary>
+    FireAlarm,
+
+    /// <summary>A purchase lands in the till: a bright double-click.</summary>
+    Coin,
 }
 
 /// <summary>
@@ -92,6 +107,13 @@ public static class Sfx
             _sounds[SfxId.Lose] = FromSamples(Arpeggio(new[] { 523f, 415f, 349f, 262f }, 0.13f, 0.4f));
             _sounds[SfxId.AlarmBlip] = FromSamples(Chirp(0.07f, 1400f, 1400f, 0.22f));
             _sounds[SfxId.Heartbeat] = FromSamples(Heartbeat());
+            _sounds[SfxId.PowerUp] = FromSamples(Arpeggio(new[] { 660f, 880f, 1320f }, 0.07f, 0.3f));
+            _sounds[SfxId.Hiss] = FromSamples(Hiss());
+            _sounds[SfxId.Slip] = FromSamples(Sweep(0.35f, 520f, 130f, 0.32f, 1.0f));
+            _sounds[SfxId.FireAlarm] = FromSamples(
+                Arpeggio(new[] { 988f, 1319f, 988f, 1319f, 988f, 1319f }, 0.11f, 0.28f));
+            _sounds[SfxId.Coin] = FromSamples(
+                Arpeggio(new[] { 1319f, 1760f }, 0.07f, 0.3f));
             _available = true;
         }
         catch (Exception ex)
@@ -128,12 +150,13 @@ public static class Sfx
     /// Plays a cue quieter the further away the source is, with stereo panning
     /// based on the source's X offset from the listener.
     /// </summary>
-    public static void PlayAt(SfxId id, Vector3 listener, Vector3 source, float maxDistance, float volume = 1f)
+    public static void PlayAt(SfxId id, Vector3 listener, Vector3 source, float maxDistance, float volume = 1f, float pitch = 0f)
     {
         float d = Vector3.Distance(listener, source);
         if (d > maxDistance) return;
         float falloff = 1f - (d / maxDistance);
-        Play(id, volume * falloff * falloff, pan: MathHelper.Clamp((source.X - listener.X) / 12f, -1f, 1f));
+        Play(id, volume * falloff * falloff, pitch: pitch,
+            pan: MathHelper.Clamp((source.X - listener.X) / 12f, -1f, 1f));
     }
 
     /// <summary>Disposes all sound buffers and marks the system as unavailable.</summary>
@@ -298,6 +321,46 @@ public static class Sfx
 
         // Keep the sum inside [-1, 1] so the two overlapping thumps don't clip.
         for (int i = 0; i < n; i++) outp[i] = MathHelper.Clamp(outp[i] * 0.85f, -1f, 1f);
+        return outp;
+    }
+
+    /// <summary>
+    /// The spray bottle: a pressurised hiss. Filtered noise with a bright
+    /// cutoff, a fast attack and a long-ish release — it should read as
+    /// "something is being sprayed", not as wind or as the tackle's scuff.
+    /// </summary>
+    private static float[] Hiss()
+    {
+        const float seconds = 0.5f;
+        int n = Samples(seconds);
+        var outp = new float[n];
+
+        // (start, length, gain, lowpass) — two bursts, like a pump action.
+        (float Start, float Len, float Gain, float Hz)[] pumps =
+        {
+            (0.00f, 0.24f, 1.00f, 5200f),
+            (0.26f, 0.20f, 0.70f, 5200f),
+        };
+
+        foreach (var (start, len, gain, hz) in pumps)
+        {
+            int startSample = Samples(start);
+            int lenSamples = Samples(len);
+            float alpha = MathHelper.Clamp(hz / SampleRate, 0.01f, 1f);
+            float last = 0f;
+
+            for (int i = 0; i < lenSamples && startSample + i < n; i++)
+            {
+                float white = (float)(Random.Shared.NextDouble() * 2 - 1);
+                last += alpha * (white - last);
+                // Attack then release, so neither burst clicks.
+                float t = (float)i / lenSamples;
+                float env = t < 0.1f ? t / 0.1f : MathF.Pow(1f - (t - 0.1f) / 0.9f, 1.6f);
+                outp[startSample + i] += last * env * gain;
+            }
+        }
+
+        for (int i = 0; i < n; i++) outp[i] = MathHelper.Clamp(outp[i] * 0.9f, -1f, 1f);
         return outp;
     }
 

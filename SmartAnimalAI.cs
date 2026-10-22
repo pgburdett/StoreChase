@@ -10,14 +10,18 @@ namespace StoreChase;
 /// species differ in numbers and a few flags rather than in separate classes.
 ///
 /// Priority order for each decision:
-///   1. standing on loot and inclined to take it  -> stand still and take it
-///   2. being watched, if this profile freezes     -> do nothing at all
-///   3. a ball is bouncing nearby                 -> go and look at the ball
-///   4. carrying something and the player is close -> run, ideally for the till
-///   5. carrying something and the player is far   -> make for the counter
-///   6. the player is close                       -> flee
-///   7. the player is nearby                      -> drift away
-///   8. otherwise                                 -> wander, biased toward shelves
+///   1. panicking (sprayed)                       -> run, ignore everything
+///   2. standing on loot and inclined to take it  -> stand still and take it
+///   3. being watched, if this profile freezes     -> do nothing at all
+///   4. a ball is bouncing nearby                 -> go and look at the ball
+///   5. a treat has landed nearby                 -> go and eat it (friends!)
+///   6. befriended                                -> shadow the player
+///   7. carrying something and the player is close -> run, ideally for the till
+///   8. carrying something and the player is far   -> make for the counter
+///   9. the player is close                       -> flee
+///   10. the player is nearby                      -> drift away
+///   10b. heard about the player, can't see them  -> head for where they were
+///   11. otherwise                                 -> wander, biased toward shelves
 ///
 /// The loot rules are the interesting part: a thief that reaches the counter
 /// drops what it stole there and the alarm spikes, so bolting for the till is
@@ -42,8 +46,23 @@ public class SmartAnimalAI : ICritterAI
     private int[,]? _distFromPlayer;
     private int[,]? _distFromSelf;
 
+    /// <summary>How far away a cat notices a dropped treat, in cells. The
+    /// ball has no such limit (one cat, one ball); the treat pulls a crowd,
+    /// so it needs a range or it would empty the store from anywhere.</summary>
+    public const int TreatRadius = 10;
+
+    /// <summary>
+    /// How close a befriended cat walks to the player, in cells. Below this
+    /// it stands; it never shares the player's cell (walking into a friend
+    /// gives ground instead — see <see cref="FollowPlayer"/>).
+    /// </summary>
+    public const int FriendFollowDistance = 3;
+
     /// <summary>True when the AI wants to steal what's underfoot (set by <see cref="DecideNextMove"/>).</summary>
     public bool WantsToSteal { get; private set; }
+
+    /// <summary>True when the AI wants the treat underfoot (set by <see cref="DecideNextMove"/>).</summary>
+    public bool WantsTreat { get; private set; }
 
     /// <summary>The current pose target for the animation rig.</summary>
     public CatPose Pose { get; private set; }
@@ -66,12 +85,16 @@ public class SmartAnimalAI : ICritterAI
     public GridPos? DecideNextMove(CritterContext context)
     {
         WantsToSteal = false;
+        WantsTreat = false;
         _replanTimer -= context.DeltaTime;
         _startleTimer = MathF.Max(0f, _startleTimer - context.DeltaTime);
         _freezeTimer = MathF.Max(0f, _freezeTimer - context.DeltaTime);
 
         int dist = ManhattanDistance(context.CurrentCell, context.PlayerCell);
-        bool threatened = context.CanSeePlayer &&
+
+        // A friend is never a threatened animal: being looked at or seen is
+        // company, not danger, so it must not pose (or act) as if fleeing.
+        bool threatened = context.CanSeePlayer && !context.Befriended &&
                           dist <= _profile.FleeRadius;
 
         GridPos? result = Decide(context, dist, threatened);
@@ -83,6 +106,16 @@ public class SmartAnimalAI : ICritterAI
 
     private GridPos? Decide(CritterContext context, int dist, bool threatened)
     {
+        // 0. Panic (sprayed). Whatever it was doing, it is now running from
+        // the player. It also stops stealing while panicking — see
+        // ShouldTakeLoot — so this is pure crowd control.
+        if (context.Panic > 0f)
+        {
+            _currentPath.Clear();
+            _startleTimer = MathF.Max(_startleTimer, 0.4f);
+            return Flee(context);
+        }
+
         // 1. Loot underfoot. Standing still is the move: the game picks it up.
         if (context.LootUnderfoot != null && !context.Carrying)
         {
@@ -115,7 +148,31 @@ public class SmartAnimalAI : ICritterAI
             return PathStepToward(context.Map, context.CurrentCell, ball);
         }
 
-        // 4/5. Carrying loot. Close and looking -> get away. Far enough -> take
+        // 4. A treat works like the ball but pulls every cat in earshot, so
+        // it is gated by distance: a snack across the store is not news.
+        // Standing on it means eating it — the game turns the snack into
+        // friendship and consumes the treat (WantsTreat).
+        if (context.Treat is { } treat && !context.Carrying &&
+            ManhattanDistance(context.CurrentCell, treat) <= TreatRadius)
+        {
+            if (context.CurrentCell == treat)
+            {
+                WantsTreat = true;
+                return null; // busy eating
+            }
+
+            _currentPath.Clear();
+            return PathStepToward(context.Map, context.CurrentCell, treat);
+        }
+
+        // 5. Befriended. A fed cat is neither thief nor prey: it shadows the
+        // player like a shop cat at heel. Feeding already stopped it
+        // stealing for good (see ShouldTakeLoot), so there is nothing else
+        // in the world it wants.
+        if (context.Befriended)
+            return FollowPlayer(context, dist);
+
+        // 6/7. Carrying loot. Close and looking -> get away. Far enough -> take
         // the long run at the counter.
         if (context.Carrying)
         {
@@ -124,20 +181,20 @@ public class SmartAnimalAI : ICritterAI
                 : HeadForCounter(context);
         }
 
-        // 6. Too close. Run.
+        // 7. Too close. Run.
         if (threatened)
         {
             _startleTimer = 0.8f;
             return Flee(context);
         }
 
-        // 7. Noticed you, but no rush.
+        // 8. Noticed you, but no rush.
         if (context.CanSeePlayer && dist <= _profile.AlertRadius)
         {
             return Alert(context);
         }
 
-        // 7b. Hasn't seen you, but has heard about you. Head for where you
+        // 8b. Hasn't seen you, but has heard about you. Head for where you
         // were, or at least look that way. This is what makes one cat
         // spotting the player matter to the cats two aisles away.
         //
@@ -150,7 +207,7 @@ public class SmartAnimalAI : ICritterAI
                 return PathStepToward(context.Map, context.CurrentCell, lastSeen);
         }
 
-        // 8. Nothing happening. Go and find something to steal, or wander.
+        // 9. Nothing happening. Go and find something to steal, or wander.
         if (context.LootTargetItem is { } item && context.StolenCount < 3)
         {
             // A cat only bothers with what it likes — unless the store is
@@ -173,6 +230,19 @@ public class SmartAnimalAI : ICritterAI
         paused = false;
         if (_profile.ThiefDrive <= 0f) return false;
         if (context.LootUnderfoot is not { } underfoot) return false;
+
+        // A friend never shoplifts — not even from under its own paws. This
+        // is the whole point of feeding it: one fewer thief in the store,
+        // for the price of two treats.
+        if (context.Befriended) return false;
+
+        // A panicking cat (sprayed) is running, not shopping.
+        if (context.Panic > 0f) return false;
+
+        // A Burglar won't shoplift in front of you. This is what makes the
+        // camera a *two-way* tool: staring down a Nervous cat pins it, and
+        // staring down a Burglar stops it mid-grab.
+        if (_profile.Sneaky && context.BeingWatched) return false;
 
         // Only what it likes. A cat that does not want tins walks over them.
         // Unless the store is about to go off, in which case it takes what it
@@ -302,6 +372,38 @@ public class SmartAnimalAI : ICritterAI
             if (d < bestDist) { bestDist = d; best = cell; }
         }
         return best;
+    }
+
+    // A friend keeps pace with the player: close enough to be company, far
+    // enough not to clip through them. No quirks, no escaping, no errands —
+    // the whole behaviour is "you, but a few paces behind".
+    private GridPos? FollowPlayer(CritterContext context, int dist)
+    {
+        // Standing on (or beside) the player: give ground rather than share
+        // the cell. A friend that overlaps the player reads as a bug, not
+        // affection.
+        if (dist <= 1)
+            return StepAside(context, dist);
+
+        // Keeping up: walk towards them.
+        if (dist >= FriendFollowDistance)
+            return PathStepToward(context.Map, context.CurrentCell, context.PlayerCell);
+
+        // Companionable distance reached: amble along with them.
+        return null;
+    }
+
+    // One step to a walkable neighbour strictly further from the player than
+    // the cat already is (from the player's own cell, any neighbour will do).
+    private GridPos? StepAside(CritterContext context, int dist)
+    {
+        foreach (var d in ShuffledDirections())
+        {
+            var candidate = new GridPos(context.CurrentCell.X + d.X, context.CurrentCell.Y + d.Y);
+            if (!context.Map.IsWalkable(candidate.X, candidate.Y)) continue;
+            if (ManhattanDistance(candidate, context.PlayerCell) > dist) return candidate;
+        }
+        return null;
     }
 
     // Keeping a little distance without a real plan: take any step that doesn't

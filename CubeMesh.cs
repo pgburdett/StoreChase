@@ -39,12 +39,34 @@ namespace StoreChase
             void Face(Vector3 normal, Vector3 a, Vector2 ua, Vector3 b, Vector2 ub,
                       Vector3 c, Vector2 uc, Vector3 d, Vector2 ud)
             {
-                v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
-                v[i++] = new VertexPositionNormalColorTexture(b, normal, color, ub);
-                v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
-                v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
-                v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
-                v[i++] = new VertexPositionNormalColorTexture(d, normal, color, ud);
+                // Wound at build time rather than by hand. The rule the game's
+                // rasterizer wants is cross(v1-v0, v2-v0) · normal < 0 for every
+                // triangle (the floor quad is uniform-negative and renders; see
+                // WindingChecks), and hand-ordered corners silently violate it
+                // for some faces: an earlier pass fixed the cube's up face but
+                // left ±Z backwards, so the aisle-facing side of every shelf was
+                // a hole you could see through in the tilted and first-person
+                // views. Checking the sign here makes the mesh correct whatever
+                // order the corners arrive in.
+                bool front = Vector3.Dot(Vector3.Cross(b - a, c - a), normal) < 0f;
+                if (front)
+                {
+                    v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
+                    v[i++] = new VertexPositionNormalColorTexture(b, normal, color, ub);
+                    v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
+                    v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
+                    v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
+                    v[i++] = new VertexPositionNormalColorTexture(d, normal, color, ud);
+                }
+                else
+                {
+                    v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
+                    v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
+                    v[i++] = new VertexPositionNormalColorTexture(b, normal, color, ub);
+                    v[i++] = new VertexPositionNormalColorTexture(a, normal, color, ua);
+                    v[i++] = new VertexPositionNormalColorTexture(d, normal, color, ud);
+                    v[i++] = new VertexPositionNormalColorTexture(c, normal, color, uc);
+                }
             }
 
             // Cube spans X:[-0.5,0.5], Z:[-0.5,0.5], Y:[0,1] (sits on the floor)
@@ -96,6 +118,21 @@ namespace StoreChase
         /// are how many texture tiles span the whole quad, so a caller that wants
         /// one tile every N world units divides the extent by N.
         /// </summary>
+        /// <remarks>
+        /// The vertex order is the opposite way round to <see cref="Build"/>'s
+        /// top face, and that is deliberate. The game draws with
+        /// <c>CullCounterClockwiseFace</c>, so a quad wound the other way is
+        /// back-facing when seen from above and gets culled — which is exactly
+        /// what used to happen here. The floor was invisible for as long as the
+        /// texture work existed, and the store looked like it was floating in
+        /// a void with the shelves hanging in the dark. Only a screenshot of
+        /// the running game showed it; nothing in the source, and no test of
+        /// the geometry, could tell, because the vertex data was perfectly
+        /// reasonable and only the *winding* was wrong.
+        ///
+        /// So: this quad is wound to face up, and <see cref="Build"/>'s faces
+        /// are wound to face out of the cube.
+        /// </remarks>
         public static VertexPositionNormalColorTexture[] BuildFloorQuad(
             Color color, float width, float depth, float uRepeat, float vRepeat)
         {
@@ -108,12 +145,13 @@ namespace StoreChase
 
             Vector2 Uv(Vector2 p) => new(p.X / width * uRepeat, p.Y / depth * vRepeat);
 
+            // Wound so the face points up, towards the camera.
             v[0] = new VertexPositionNormalColorTexture(new Vector3(p00.X, 0, p00.Y), n, color, Uv(p00));
-            v[1] = new VertexPositionNormalColorTexture(new Vector3(p01.X, 0, p01.Y), n, color, Uv(p01));
-            v[2] = new VertexPositionNormalColorTexture(new Vector3(p11.X, 0, p11.Y), n, color, Uv(p11));
+            v[1] = new VertexPositionNormalColorTexture(new Vector3(p11.X, 0, p11.Y), n, color, Uv(p11));
+            v[2] = new VertexPositionNormalColorTexture(new Vector3(p01.X, 0, p01.Y), n, color, Uv(p01));
             v[3] = new VertexPositionNormalColorTexture(new Vector3(p00.X, 0, p00.Y), n, color, Uv(p00));
-            v[4] = new VertexPositionNormalColorTexture(new Vector3(p11.X, 0, p11.Y), n, color, Uv(p11));
-            v[5] = new VertexPositionNormalColorTexture(new Vector3(p10.X, 0, p10.Y), n, color, Uv(p10));
+            v[4] = new VertexPositionNormalColorTexture(new Vector3(p10.X, 0, p10.Y), n, color, Uv(p10));
+            v[5] = new VertexPositionNormalColorTexture(new Vector3(p11.X, 0, p11.Y), n, color, Uv(p11));
             return v;
         }
     }

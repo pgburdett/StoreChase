@@ -60,6 +60,29 @@ public class Critter
     /// Set by a ball hit; the game handles the drop.</summary>
     public bool Stunned => _stunTimer > 0f;
 
+    /// <summary>
+    /// True while the cat is showing a "what was that?!" reaction — flinched
+    /// by something that did not stun it (a ball bouncing off a Moggy's
+    /// head, a slip). It keeps its freedom of movement; only the rig reacts.
+    /// </summary>
+    public bool Startled => _startleTimer > 0f;
+
+    /// <summary>
+    /// Seconds left of panic (from a spray). A panicking cat flees the player
+    /// no matter what it was doing, and won't touch the merchandise.
+    /// </summary>
+    public float PanicSeconds => _panicTimer;
+
+    /// <summary>
+    /// The speed this cat is actually moving at this frame, in cells per
+    /// second. A thief carrying goods may sprint (see
+    /// <see cref="CritterProfile.CarrySpeedBoost"/>) — that is the getaway
+    /// gear, and it is what makes a grab-and-run species feel different from
+    /// one that ambles off with a tin.
+    /// </summary>
+    public float CurrentMoveSpeed =>
+        Profile.MoveSpeed * (Carrying ? Profile.CarrySpeedBoost : 1f);
+
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
@@ -83,11 +106,39 @@ public class Critter
     /// </summary>
     public GridPos? LastSeenPlayerCell { get; set; }
 
+    /// <summary>
+    /// How many treats this cat has been fed.
+    ///
+    /// Two make a friend (see <see cref="FriendThreshold"/>): a fed cat
+    /// stops stealing for the round and shadows the player instead. The
+    /// counter keeps climbing past the threshold — extra snacks are just
+    /// extra snacks.
+    /// </summary>
+    public int Friendship { get; private set; }
+
+    /// <summary>Treats needed to befriend a cat.</summary>
+    public const int FriendThreshold = 2;
+
+    /// <summary>True once the cat has been fed into friendship.</summary>
+    public bool Befriended => Friendship >= FriendThreshold;
+
+    /// <summary>
+    /// Feeds the cat one treat. Returns true when this treat is the one
+    /// that crossed it into friendship (the moment worth announcing).
+    /// </summary>
+    public bool Feed()
+    {
+        Friendship++;
+        return Friendship == FriendThreshold;
+    }
+
     private GridPos _from;
     private GridPos _to;
     private float _t;
     private bool _isMoving;
     private float _stunTimer;
+    private float _startleTimer;
+    private float _panicTimer;
 
     private readonly ICritterAI _ai;
     private readonly float _cellSize;
@@ -112,6 +163,45 @@ public class Critter
     public void Stun(float seconds) => _stunTimer = MathF.Max(_stunTimer, seconds);
 
     /// <summary>
+    /// Shows a brief flinch reaction for <paramref name="seconds"/> without
+    /// taking away the cat's freedom of movement. The rig plays it as a
+    /// Startle; the AI is not consulted about it.
+    /// </summary>
+    public void Startle(float seconds) => _startleTimer = MathF.Max(_startleTimer, seconds);
+
+    /// <summary>
+    /// Panics the cat for <paramref name="seconds"/>: while it lasts the AI
+    /// flees the player whatever it was doing, and won't touch the
+    /// merchandise. This is the spray bottle's effect — crowd control that
+    /// does not cost the cat its loot.
+    /// </summary>
+    public void Panic(float seconds) => _panicTimer = MathF.Max(_panicTimer, seconds);
+
+    /// <summary>
+    /// Applies a ball hit, honouring this species' tolerance
+    /// (<see cref="CritterProfile.StunDurationFactor"/>).
+    ///
+    /// A normal cat is stunned for the full <paramref name="seconds"/>. An
+    /// immune one (the Moggy) just flinches: the ball still explodes, the
+    /// cat still notices, but it walks on. Returning whether the cat was
+    /// actually stunned keeps the "did it drop its loot?" decision in one
+    /// place — the game, not the critter.
+    /// </summary>
+    /// <returns>True if the cat was stunned (and so should drop its loot).</returns>
+    public bool TryStunFromBall(float seconds)
+    {
+        float factor = Profile.StunDurationFactor;
+        if (factor <= 0f)
+        {
+            Startle(0.8f);
+            return false;
+        }
+
+        Stun(seconds * factor);
+        return true;
+    }
+
+    /// <summary>
     /// Advances the critter one frame. <paramref name="locus"/> supplies the
     /// world facts the AI needs but that this class doesn't own — the player,
     /// the ball, and the loot.
@@ -126,6 +216,10 @@ public class Critter
 
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
+        // Reactions age whether or not the cat is otherwise busy.
+        if (_startleTimer > 0f) _startleTimer -= dt;
+        if (_panicTimer > 0f) _panicTimer -= dt;
+
         // Stunned: tick down and sit out the frame. No movement, no decisions,
         // no stealing — but the cat is still in the game and still drawn.
         if (_stunTimer > 0f)
@@ -137,8 +231,9 @@ public class Critter
         // A collision counts whether the player moved onto the critter or the
         // critter moved onto the player. Checking only on arrival (below) means
         // a critter that's standing still can never be caught, because the next
-        // thing it does is decide to walk away.
-        if (Cell == locus.PlayerCell) { Tackled = true; return; }
+        // thing it does is decide to walk away. A friend is not a thief:
+        // befriend one and you can stand on it all day.
+        if (Cell == locus.PlayerCell && !Befriended) { Tackled = true; return; }
 
         // 1. Decision. The AI is only consulted when standing still, so it
         // plans at cell granularity exactly like before.
@@ -154,6 +249,11 @@ public class Critter
             {
                 Carrying = true;
             }
+
+            // Same split for treats: the AI says "eating now", the game
+            // turns the snack into friendship and consumes the treat.
+            if (_ai.WantsTreat)
+                locus.TryEatTreat?.Invoke(this);
 
             Pose = _ai.Pose;
 
@@ -179,7 +279,7 @@ public class Critter
         // snapping.
         if (_isMoving)
         {
-            _t += dt * Profile.MoveSpeed;
+            _t += dt * CurrentMoveSpeed;
             if (_t >= 1f)
             {
                 _t = 1f;
@@ -187,8 +287,9 @@ public class Critter
                 Cell = _to;
                 JustArrived = true;
 
-                // Landing on the player counts as a tackle.
-                if (Cell == locus.PlayerCell) Tackled = true;
+                // Landing on the player counts as a tackle — except for a
+                // friend, who is walking with you, not being caught.
+                if (Cell == locus.PlayerCell && !Befriended) Tackled = true;
             }
 
             Vector3 fromPos = new(_from.X * _cellSize, 0f, _from.Y * _cellSize);
@@ -216,7 +317,10 @@ public class Critter
         StolenCount: locus.StolenCount,
         AlarmStage: locus.AlarmStage,
         PlayerAwareness: PlayerAwareness,
-        LastSeenPlayerCell: LastSeenPlayerCell);
+        LastSeenPlayerCell: LastSeenPlayerCell,
+        Treat: locus.Treat,
+        Panic: _panicTimer,
+        Befriended: Befriended);
 
     /// <summary>Marks the critter as tackled. The game handles the drop and removal.</summary>
     public void Tackle() => Tackled = true;
@@ -236,5 +340,14 @@ public readonly record struct CritterLocus(
     int StolenCount,
     Func<Critter, LootItem?> LootUnderfoot,
     Func<Critter, bool> TrySteal,
-    AlarmStage AlarmStage = AlarmStage.Calm
+    AlarmStage AlarmStage = AlarmStage.Calm,
+
+    /// <summary>Cell of a dropped treat, if one exists. Cats path to it like
+    /// a ball, but several at once — the lure is the point.</summary>
+    GridPos? Treat = null,
+
+    /// <summary>A cat standing on the treat wants to eat it; the game turns
+    /// the snack into friendship and consumes the treat. Null when the world
+    /// has no treat rules (the headless round simulation).</summary>
+    Func<Critter, bool>? TryEatTreat = null
 );

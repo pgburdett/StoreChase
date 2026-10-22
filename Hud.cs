@@ -28,7 +28,35 @@ public readonly record struct HudState(
     IReadOnlyList<LootItem> Loot,
     GridPos PlayerCell,
     StoreLayout Layout,
-    float TitlePhase);
+    float TitlePhase,
+
+    /// <summary>What's in the power-up pocket, for the "[E] use …" line.</summary>
+    PowerUpKind? Pocketed,
+
+    /// <summary>Seconds left of the active speed boost (skates), 0 when none.</summary>
+    float BoostSecondsLeft,
+
+    /// <summary>Floating texts to project over the world (the juice layer).</summary>
+    IReadOnlyList<FxText> Popups,
+
+    /// <summary>The purse: coins banked this run.</summary>
+    int Coins,
+
+    /// <summary>One-based round number ("Round 3").</summary>
+    int RoundNumber,
+
+    /// <summary>What R does on the end screen ("new store" or "retry").</summary>
+    string RestartHint,
+
+    /// <summary>The shop, in key-slot order; empty while playing.</summary>
+    IReadOnlyList<ShopOption> Shop,
+
+    /// <summary>
+    /// How audible the player is right now, 0..1 (0 = silent, 1 = as loud as
+    /// the store gets). Normalised by Game1 before it gets here; the HUD only
+    /// draws the pip.
+    /// </summary>
+    float Noise);
 
 // The screen-space overlay: the objective readout, the alarm meter, the
 // control hint, the off-screen thief marker and the end-of-round banner.
@@ -48,8 +76,9 @@ public sealed class Hud
 
     // The minimap. The store is bigger than the screen, so the player needs
     // a way to see the whole floor plan at once — otherwise the scrolling
-    // camera turns a heist into an exploration.
-    private readonly Texture2D _minimap;
+    // camera turns a heist into an exploration. Rebuilt by SetLayout when
+    // the campaign moves the game to a different store.
+    private Texture2D _minimap;
     private readonly int _minimapCellPixels;
 
     /// <summary>Creates a new HUD with the given graphics resources.</summary>
@@ -64,6 +93,18 @@ public sealed class Hud
         _uiPixel = uiPixel;
         _feed = new MessageFeed(EventSystem.Instance);
         (_minimap, _minimapCellPixels) = BuildMinimap(graphicsDevice, layout);
+    }
+
+    /// <summary>
+    /// Rebuilds the minimap for a new floor plan. The campaign changes
+    /// store between rounds; the baked texture is the floor plan, so it
+    /// has to be re-baked (the old one is dropped, or it leaks one texture
+    /// per store visited).
+    /// </summary>
+    public void SetLayout(StoreLayout layout)
+    {
+        _minimap.Dispose();
+        (_minimap, _) = BuildMinimap(_graphicsDevice, layout);
     }
 
     /// <summary>
@@ -159,6 +200,7 @@ public sealed class Hud
         DrawAlarmMeter(state);
         DrawHoldHint(state);
         DrawThiefMarker(state);
+        DrawPopups(state);
         DrawEndBanner(state);
 
         // The event feed: newest at the bottom, older ones scroll up and off.
@@ -185,6 +227,9 @@ public sealed class Hud
         var line = new Vector2(16, 40);
         const int step = 22;
 
+        _spriteBatch.DrawString(font, $"Round {state.RoundNumber}   {state.Coins}c", line,
+            new Color(245, 205, 110));
+        line.Y += step;
         _spriteBatch.DrawString(font, $"Time  {state.ElapsedTime:F1}s", line, Color.White);
         line.Y += step;
         _spriteBatch.DrawString(font, $"Behind the counter  {secured}/{total}",
@@ -211,7 +256,8 @@ public sealed class Hud
         line.Y += step;
         foreach (var critter in state.Critters)
         {
-            string flag = critter.Carrying ? "  [!] carrying" : "";
+            string flag = critter.Befriended ? "  [friend]"
+                : critter.Carrying ? "  [!] carrying" : "";
             _spriteBatch.DrawString(font, $"  {critter.Profile.Name}{flag}",
                 line, critter.Profile.Tint);
             line.Y += step;
@@ -360,6 +406,23 @@ public sealed class Hud
             _ => "calm",
         };
         _spriteBatch.DrawString(_font!, stage, new Vector2(x + width, y - 22), fill);
+
+        // The noise pip: how audible the player is right now. Silent is the
+        // stealth state, so it only appears once there is something to hear —
+        // a walking player gets a warm bar, a skidding one burns red.
+        if (state.Noise > 0.01f)
+        {
+            const int pipWidth = 60, pipHeight = 6;
+            int pipY = y + height + 5;
+            var pipFill = Color.Lerp(new Color(210, 176, 96), new Color(230, 90, 60),
+                Math.Clamp(state.Noise, 0f, 1f));
+            _spriteBatch.Draw(_uiPixel, new Rectangle(x, pipY, pipWidth, pipHeight),
+                new Color(30, 30, 38));
+            _spriteBatch.Draw(_uiPixel,
+                new Rectangle(x, pipY, (int)(pipWidth * state.Noise), pipHeight), pipFill);
+            _spriteBatch.DrawString(_font!, "noise",
+                new Vector2(x + pipWidth + 8, pipY - 5), pipFill * 0.9f);
+        }
     }
 
     // One contextual line of controls, so the keybinds that only matter at
@@ -371,6 +434,15 @@ public sealed class Hud
             _spriteBatch.DrawString(_font!, "[R] new round", new Vector2(16, _graphicsDevice.Viewport.Height - 34), Color.White);
             return;
         }
+
+        // The power-up line sits above the view hint: what you're carrying,
+        // and how long the skates have left if they're on your feet.
+        string pocket = state.Pocketed is { } kind ? $"[E] use {PowerUpItem.Name(kind)}" : "";
+        if (state.BoostSecondsLeft > 0f)
+            pocket += (pocket.Length > 0 ? "    " : "") + $"skates {state.BoostSecondsLeft:F1}s";
+        if (pocket.Length > 0)
+            _spriteBatch.DrawString(_font!, pocket,
+                new Vector2(16, _graphicsDevice.Viewport.Height - 84), new Color(140, 200, 240));
 
         string hint = state.ViewMode == CameraViewMode.FirstPerson
             ? "[click] throw a ball    [V] overhead"
@@ -444,9 +516,39 @@ public sealed class Hud
                 new Color(226, 84, 66));
         }
 
-        // The species name, so the player learns which cat is the trouble.
+            // The species name, so the player learns which cat is the trouble.
         _spriteBatch.DrawString(_font!, thief.Profile.Name,
             new Vector2(projected.X - 40, projected.Y + 24), new Color(226, 84, 66));
+    }
+
+    // Floating texts: "+1 secured", "SLIP!", the cost of the fire alarm.
+    // Projected with the same row-vector convention as the thief marker;
+    // FxSystem has already risen and faded them, so all that's left here is
+    // where and how strongly to draw them.
+    private void DrawPopups(in HudState state)
+    {
+        if (state.Popups.Count == 0) return;
+
+        var viewport = _graphicsDevice.Viewport;
+
+        foreach (var popup in state.Popups)
+        {
+            Vector4 clip = Vector4.Transform(new Vector4(popup.WorldPos, 1f), state.ViewProjection);
+            if (clip.W <= 0.0001f) continue;
+
+            var ndc = new Vector2(clip.X / clip.W, clip.Y / clip.W);
+            var screen = new Vector2(
+                (ndc.X * 0.5f + 0.5f) * viewport.Width,
+                (0.5f - ndc.Y * 0.5f) * viewport.Height);
+
+            if (screen.X < -60 || screen.Y < -60 ||
+                screen.X > viewport.Width + 60 || screen.Y > viewport.Height + 60) continue;
+
+            var size = _font!.MeasureString(popup.Text);
+            // Lifted and lightened as it fades: the tail of a "+1" arc.
+            _spriteBatch.DrawString(_font, popup.Text,
+                screen - size / 2f, popup.Color * popup.Strength);
+        }
     }
 
     private void DrawEndBanner(in HudState state)
@@ -464,7 +566,77 @@ public sealed class Hud
             new Vector2((w - _font.MeasureString(state.EndMessage).X) / 2f, h / 2f - 8), Color.White);
         _spriteBatch.DrawString(_font!, $"Recovered {state.SecuredCount}/{state.TotalCount} in {state.ElapsedTime:F1}s",
             new Vector2((w - _font.MeasureString("Recovered").X) / 2f, h / 2f + 16), Color.LightGray);
+        _spriteBatch.DrawString(_font!, state.RestartHint,
+            new Vector2((w - _font.MeasureString(state.RestartHint).X) / 2f, h / 2f + 44),
+            new Color(255, 220, 130));
+
+        DrawShopPanel(state, h);
     }
+
+    // The between-rounds shop. Six slots, drawn in the same order the number
+    // keys buy in — that correspondence is the whole interface, so the
+    // catalog order is the display order with nothing re-sorted. Affordable
+    // rows glow gold; short rows grey out (you can still buy nothing); a
+    // maxed permanent says so rather than showing a price it won't take.
+    private void DrawShopPanel(in HudState state, int viewportHeight)
+    {
+        if (state.Shop.Count == 0) return;
+
+        var font = _font!;
+        int y = viewportHeight / 2 + 96;
+
+        string header = $"SHOP   {state.Coins}c";
+        _spriteBatch.DrawString(font, header,
+            new Vector2((_graphicsDevice.Viewport.Width - font.MeasureString(header).X) / 2f, y),
+            new Color(245, 205, 110));
+        y += 26;
+
+        // Two columns of three: the consumables left, the permanents right.
+        // Six single-column rows would run off the bottom of a 1200px window
+        // once the banner and hint are accounted for.
+        const int colWidth = 340;
+        int leftX = (_graphicsDevice.Viewport.Width - colWidth * 3) / 2;
+
+        for (int i = 0; i < state.Shop.Count; i++)
+        {
+            var option = state.Shop[i];
+            int col = i / 3;
+            int row = i % 3;
+            var at = new Vector2(leftX + col * colWidth, y + row * 22);
+
+            // Tier display: permanents show "II/III" once owned, consumables
+            // show how many are queued in the pocket queue.
+            string tier = option.Consumable
+                ? ""
+                : option.Tier > 0
+                    ? $" {Roman(option.Tier)}/{Roman(option.MaxTier)}"
+                    : "";
+
+            string cost = option.Tier >= option.MaxTier && !option.Consumable
+                ? "MAXED"
+                : $"{option.Cost}c";
+
+            string label = $"[{i + 1}] {option.Name}{tier}   {cost}";
+            var colour = option.Tier >= option.MaxTier && !option.Consumable
+                ? new Color(140, 220, 140)                       // maxed: done, not dimmed
+                : option.CanAfford
+                    ? new Color(255, 235, 160)                   // buyable: gold
+                    : new Color(120, 120, 130);                  // short: dimmed
+
+            _spriteBatch.DrawString(font, label, at, colour);
+        }
+    }
+
+    // I/II/III — enough for three tiers, which is all the shop sells. A
+    // number would do, but "Fast shoes II/III" is a shop, and shops have
+    // Roman numerals.
+    private static string Roman(int n) => n switch
+    {
+        1 => "I",
+        2 => "II",
+        3 => "III",
+        _ => n.ToString(),
+    };
 
     // "Store Chase" centered at the top of the screen. The base hue comes
     // from RainbowTitle's background thread; spreading the hue per

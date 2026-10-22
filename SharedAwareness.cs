@@ -63,17 +63,24 @@ public sealed class SharedAwareness
     /// Updates what every cat knows.
     ///
     /// Each cat that can see the player raises the alarm; every cat hears it
-    /// in proportion to how close it is to the cat that saw.
+    /// in proportion to how close it is to the cat that saw. A cat that is
+    /// told nothing by the others may still hear the player directly: the
+    /// noise the player makes is a fix all of its own, filtered through this
+    /// cat's own ears (<see cref="CritterProfile.HearingRadius"/>).
     ///
     /// The value carried is *uncertainty*, not distance: zero means the cat
     /// knows exactly where the player is, and larger numbers mean a vaguer
     /// idea. A cat that saw the player itself has no uncertainty at all; a
-    /// cat two aisles away that heard about it has a rough idea and a rough
-    /// idea has a wide error bar.
+    /// cat two aisles away that heard about it — or heard the player
+    /// clattering around — has a rough idea and a rough idea has a wide
+    /// error bar.
     /// </summary>
     /// <param name="playerCell">Where the player is.</param>
     /// <param name="map">The map, for walking distance.</param>
-    public void Update(GridPos playerCell, GridMap map)
+    /// <param name="noise">The store's current noises, if any. Null means
+    /// hearing is off for the frame (the headless round simulation passes
+    /// null and plays a completely silent player).</param>
+    public void Update(GridPos playerCell, GridMap map, NoiseSystem? noise = null)
     {
         if (_critters.Count == 0) return;
 
@@ -120,10 +127,37 @@ public sealed class SharedAwareness
                 }
             }
 
+            // Hearing the player move is the weakest source of news — no
+            // cat relayed it, it is just a sound — so it only counts when
+            // this frame brought nothing better, and only when it beats the
+            // fix the cat already holds.
+            float heardVagueness = float.MaxValue;
+            GridPos? heardCell = null;
+            if (noise != null && cat.Profile.HearingRadius > 0f)
+            {
+                var sensation = noise.LoudestHeardBy(cat.Cell, cat.Profile.HearingRadius);
+                if (sensation.HasValue)
+                {
+                    heardCell = sensation.Value.Cell;
+                    heardVagueness = sensation.Value.Vagueness;
+                }
+            }
+
             if (uncertainty < float.MaxValue)
             {
                 cat.PlayerAwareness = uncertainty;
                 if (lastSeen.HasValue) cat.LastSeenPlayerCell = lastSeen;
+            }
+            // A cat that knows nothing (no fix yet — PlayerAwareness 0 with
+            // no LastSeen is the spawn state, not an exact fix) simply takes
+            // the hearing; one that already holds a fix only takes it if it
+            // is better. Sight beats both: it writes in the branch above and
+            // a vagueness is never below zero.
+            else if (heardCell.HasValue
+                     && (cat.LastSeenPlayerCell == null || heardVagueness < cat.PlayerAwareness))
+            {
+                cat.PlayerAwareness = heardVagueness;
+                cat.LastSeenPlayerCell = heardCell;
             }
         }
     }

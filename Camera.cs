@@ -62,6 +62,14 @@ namespace StoreChase
 
         private readonly float _mapWidthWorld;
         private readonly float _mapHeightWorld;
+        // The floor plan's corner in world space: cells are anchored at
+        // cell * cellSize (each spans ±cellSize/2 around its anchor), so the
+        // store occupies [-cellSize/2, mapWorld - cellSize/2] — the same
+        // half-cell frame the floor draw applies (Game1.FloorWorld). The
+        // clamp works in that frame or the view shaves a wall off one edge
+        // and shows a void strip beyond the floor on the other.
+        private readonly float _mapOriginX;
+        private readonly float _mapOriginY;
         private readonly float _cellSize;
         private readonly GraphicsDevice? _graphicsDevice;
 
@@ -102,13 +110,58 @@ namespace StoreChase
         public const float FirstPersonFovDegrees = 60f;
         public const float FirstPersonNearPlane = 0.05f;
 
+        // Screen shake. Gameplay calls AddShake (tackles, alarm spikes, the
+        // fire alarm); Update decays it, and the matrix builders apply the
+        // jitter as a positional offset to eye *and* look target — a pure
+        // frustum translation, which reads as a shake in the orthographic and
+        // perspective paths alike and leaves FocusPoint (what the framing
+        // tests measure) untouched.
+        public const float MaxShake = 1f;
+        public const float ShakeDecay = 2.4f;       // strength units per second
+        public const float ShakeWorldScale = 0.3f;  // world units of jitter at full strength
+
+        private float _shake;
+        private readonly Random _shakeRng = new();
+
+        /// <summary>The shake strength still to burn off (0 = steady).</summary>
+        public float Shake => _shake;
+
+        /// <summary>Adds shake, accumulating up to <see cref="MaxShake"/>.</summary>
+        public void AddShake(float amplitude) =>
+            _shake = Math.Min(MaxShake, _shake + Math.Max(0f, amplitude));
+
+        // A fresh random offset for this frame's matrices. Zero when steady,
+        // so a camera that was never shaken is deterministic (which is what
+        // lets the framing checks compare matrices at all).
+        private Vector3 ShakeOffset()
+        {
+            if (_shake <= 0.0001f) return Vector3.Zero;
+            float s = _shake * ShakeWorldScale;
+            return new Vector3(
+                (float)(_shakeRng.NextDouble() * 2 - 1),
+                (float)(_shakeRng.NextDouble() * 2 - 1),
+                (float)(_shakeRng.NextDouble() * 2 - 1)) * s;
+        }
+
         public Camera(GraphicsDevice graphicsDevice, float mapWidthWorld, float mapHeightWorld, float cellSize)
         {
             _graphicsDevice = graphicsDevice;
             _mapWidthWorld = mapWidthWorld;
             _mapHeightWorld = mapHeightWorld;
             _cellSize = cellSize;
+            _mapOriginX = _mapOriginY = -cellSize * 0.5f;
             _aspectRatio = graphicsDevice.Viewport.AspectRatio;
+
+            // Dev-only starting view, for screenshotting the game on a
+            // machine where synthetic key events never reach the window
+            // (KWin's input-injection prompt blocks xdotool, so U/O/V can't
+            // be driven remotely): SC_TILT=45 starts tilted 45°, SC_FP=1
+            // starts in first person. Unset — the normal case — this is two
+            // environment lookups and changes nothing.
+            if (float.TryParse(Environment.GetEnvironmentVariable("SC_TILT"), out float forcedTilt))
+                TiltDegrees = MathHelper.Clamp(forcedTilt, 0f, MaxTiltDegrees);
+            if (Environment.GetEnvironmentVariable("SC_FP") == "1")
+                Mode = CameraViewMode.FirstPerson;
 
             UpdateCameraMatrices();
         }
@@ -132,6 +185,7 @@ namespace StoreChase
             _mapWidthWorld = mapWidthWorld;
             _mapHeightWorld = mapHeightWorld;
             _cellSize = cellSize;
+            _mapOriginX = _mapOriginY = -cellSize * 0.5f;
             _aspectRatio = aspectRatio;
 
             UpdateCameraMatrices();
@@ -194,7 +248,12 @@ namespace StoreChase
                 baseDistance * (float)Math.Sin(tiltRad) + baseDistance * upNudge);
 
             Vector3 upVector = Vector3.Up;
-            View = Matrix.CreateLookAt(cameraPos, lookAt, upVector);
+
+            // Shake: translate the whole frustum for this frame. FocusPoint
+            // above stays the unshaken centre, so the follow/clamp maths and
+            // everything that measures framing see a steady camera.
+            Vector3 jitter = ShakeOffset();
+            View = Matrix.CreateLookAt(cameraPos + jitter, lookAt + jitter, upVector);
 
             if (TiltDegrees < 1f)
             {
@@ -227,12 +286,12 @@ namespace StoreChase
             float halfH = viewHeight / 2f;
 
             float x = viewWidth >= _mapWidthWorld
-                ? _mapWidthWorld / 2f
-                : Math.Clamp(center.X, halfW, _mapWidthWorld - halfW);
+                ? _mapOriginX + _mapWidthWorld / 2f
+                : Math.Clamp(center.X, _mapOriginX + halfW, _mapOriginX + _mapWidthWorld - halfW);
 
             float y = viewHeight >= _mapHeightWorld
-                ? _mapHeightWorld / 2f
-                : Math.Clamp(center.Y, halfH, _mapHeightWorld - halfH);
+                ? _mapOriginY + _mapHeightWorld / 2f
+                : Math.Clamp(center.Y, _mapOriginY + halfH, _mapOriginY + _mapHeightWorld - halfH);
 
             return new Vector2(x, y);
         }
@@ -243,6 +302,11 @@ namespace StoreChase
         /// </summary>
         public void Update(GameTime gameTime, in InputState input, Vector3 playerWorldPos, float playerFacing)
         {
+            // Shake burns off in real time, before this frame's matrices are
+            // rebuilt below (both modes rebuild them on this path).
+            if (_shake > 0f)
+                _shake = MathF.Max(0f, _shake - ShakeDecay * (float)gameTime.ElapsedGameTime.TotalSeconds);
+
             if (input.ToggleCamera)
             {
                 Mode = Mode == CameraViewMode.Isometric
@@ -322,7 +386,8 @@ namespace StoreChase
                 (float)Math.Cos(_fpYaw) * cosPitch);
 
             Vector3 eye = playerWorldPos + new Vector3(0f, FirstPersonEyeHeight, 0f);
-            View = Matrix.CreateLookAt(eye, eye + forward, Vector3.Up);
+            Vector3 jitter = ShakeOffset();
+            View = Matrix.CreateLookAt(eye + jitter, eye + jitter + forward, Vector3.Up);
             Projection = Matrix.CreatePerspectiveFieldOfView(
                 MathHelper.ToRadians(FirstPersonFovDegrees),
                 _aspectRatio,

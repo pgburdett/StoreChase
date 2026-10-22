@@ -186,13 +186,21 @@ public static class StoreLayouts
         counterRow: 1,
         counterStart: 6,
         counterEnd: 11,
-        playerStart: new GridPos(1, 1));
+        playerStart: new GridPos(4, 1));
 
     /// <summary>
-    /// A big store that does not fit on the screen: 34x22, with open plazas
+    /// A big store that does not fit on the screen: 26x18, with open plazas
     /// and a couple of alcoves so it doesn't read as a repeating pattern.
     /// </summary>
-    public static StoreLayout BigBox { get; } = Generate("Big Box", 34, 22, seed: 20260930);
+    /// <remarks>
+    /// The size is a balance. The viewport is 16 cells across, so anything
+    /// wider than that needs the camera to scroll, but a store much bigger
+    /// than that puts the cats so far away that they are never visible and
+    /// the round turns into a walk. At 26x18 the store is about one and a
+    /// half screens each way, which is enough for the aisles to feel like a
+    /// maze and still enough of the shop floor to be on screen at once.
+    /// </remarks>
+    public static StoreLayout BigBox { get; } = Generate("Big Box", 26, 18, seed: 20260930);
 
     /// <summary>Every authored/generated layout, for a level picker.</summary>
     public static IReadOnlyList<StoreLayout> All { get; } = new[] { Standard, BigBox };
@@ -301,7 +309,12 @@ public static class StoreLayouts
 
         // The player starts at the left end of the counter row, next to the
         // till but not on it — the "entrance" side of the shop floor.
-        var playerStart = new GridPos(1, 1);
+        //
+        // Next to the counter rather than in a corner matters now the store is
+        // bigger than the screen: the camera clamps its view to the store's
+        // edges, so a player who spawns in a corner is pinned to the edge of
+        // the screen (and under the HUD) instead of being centred on it.
+        var playerStart = new GridPos(Math.Max(1, counterStart - 2), 1);
 
         return new StoreLayout(name, rows, counterRow: 1, counterStart, counterEnd, playerStart);
     }

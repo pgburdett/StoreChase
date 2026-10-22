@@ -41,6 +41,15 @@ public readonly struct InputState
     /// fire one every frame.</summary>
     public bool Throw { get; init; }
 
+    /// <summary>Use the pocketed power-up (or pull a fire alarm — whatever the
+    /// world offers on the Use key first). Rising edge.</summary>
+    public bool Use { get; init; }
+
+    /// <summary>Shop slot the player just pressed this frame, 1-based
+    /// (0 = none). Only meaningful between rounds, when the shop is open.
+    /// Rising edge, so one press buys one item.</summary>
+    public int BuySlot { get; init; }
+
     /// <summary>A neutral (all-zero) input state, used when no device is connected.</summary>
     public static InputState Neutral => default;
 
@@ -55,5 +64,7 @@ public readonly struct InputState
         ToggleCamera ||
         Restart ||
         Exit ||
-        Throw;
+        Throw ||
+        Use ||
+        BuySlot != 0;
 }

@@ -14,6 +14,7 @@ namespace StoreChase;
 //   Shoulders (RB/LB)    -> zoom in/out (continuous)
 //   Y                    -> toggle first-person / isometric
 //   X                    -> throw the ball
+//   B                    -> use the pocketed power-up
 //   Start                -> restart
 //   Back                 -> exit
 public class GamePadInput : IInputSource
@@ -24,6 +25,7 @@ public class GamePadInput : IInputSource
     private readonly PlayerIndex _playerIndex;
     private bool _previousToggle;
     private bool _previousThrow;
+    private bool _previousUse;
 
     /// <summary>Creates a gamepad input source for the given controller slot.</summary>
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
@@ -70,6 +72,11 @@ public class GamePadInput : IInputSource
         bool throwPressed = throwNow && !_previousThrow;
         _previousThrow = throwNow;
 
+        // B uses the pocketed power-up. Rising edge like X and Y.
+        bool useNow = gp.Buttons.B == ButtonState.Pressed;
+        bool usePressed = useNow && !_previousUse;
+        _previousUse = useNow;
+
         return new InputState
         {
             Move = move,
@@ -83,6 +90,7 @@ public class GamePadInput : IInputSource
             Restart = gp.Buttons.Start == ButtonState.Pressed,
             Exit = gp.Buttons.Back == ButtonState.Pressed,
             Throw = throwPressed,
+            Use = usePressed,
         };
     }
 
