@@ -44,6 +44,17 @@ public class Critter
     /// <summary>Whether the player's camera is pointed at it.</summary>
     public bool BeingWatched { get; set; }
 
+    /// <summary>
+    /// True for the one frame after the critter finishes a step and lands on
+    /// a new cell.
+    ///
+    /// The game reads this to react to *arriving* somewhere. The cell it
+    /// landed on is the same cell it is standing on now, but the game has to
+    /// know that the arrival just happened rather than re-acting every frame
+    /// it stands there.
+    /// </summary>
+    public bool JustArrived { get; private set; }
+
     /// <summary>Seconds left of stun. While above zero the cat neither moves
     /// nor makes decisions — it's out of the action but still in the game.
     /// Set by a ball hit; the game handles the drop.</summary>
@@ -88,6 +99,10 @@ public class Critter
     public void Update(GameTime gameTime, CritterLocus locus)
     {
         if (Tackled) return;
+
+        // The arrival flag is per-frame, so it has to be cleared before
+        // anything else can read it.
+        JustArrived = false;
 
         float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
@@ -150,6 +165,7 @@ public class Critter
                 _t = 1f;
                 _isMoving = false;
                 Cell = _to;
+                JustArrived = true;
 
                 // Landing on the player counts as a tackle.
                 if (Cell == locus.PlayerCell) Tackled = true;

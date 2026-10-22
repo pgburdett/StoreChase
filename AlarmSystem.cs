@@ -43,6 +43,21 @@ public class AlarmSystem
     public float GraceSeconds { get; set; } = 0.6f;
     private float _grace;
 
+    /// <summary>
+    /// A multiplier applied to every rate, used to scale the alarm to the
+    /// size of the store.
+    ///
+    /// The rates above were tuned against one small floor plan. A bigger
+    /// store is not "harder" at the same rates — it is unwinnable, because the
+    /// player has further to walk between the till and the shelves and the
+    /// meter fills before the round can be cleared. Scaling the rates by how
+    /// much work the store is keeps the same amount of *alarm budget* in a
+    /// round regardless of its size.
+    ///
+    /// 1.0 means "as tuned".
+    /// </summary>
+    public float RateScale { get; set; } = 1f;
+
     /// <summary>Set each frame by Game1 so the HUD can show why it's rising.</summary>
     public AlarmCause Cause { get; private set; }
 
@@ -88,13 +103,13 @@ public class AlarmSystem
         switch (cause)
         {
             case AlarmCause.Thief:
-                Level += StolenRate * stolenCount * dt;
+                Level += StolenRate * RateScale * stolenCount * dt;
                 break;
             case AlarmCause.PlayerCarrying:
-                Level += PlayerCarryingRate * dt;
+                Level += PlayerCarryingRate * RateScale * dt;
                 break;
             default:
-                Level -= DecayRate * dt;
+                Level -= DecayRate * RateScale * dt;
                 break;
         }
 
@@ -108,6 +123,20 @@ public class AlarmSystem
     /// climbing.
     /// </summary>
     public void Ping() => _grace = GraceSeconds;
+
+    /// <summary>
+    /// Jumps the meter by a fixed amount, immediately.
+    ///
+    /// Used for discrete events that are worse than a rate: a thief reaching
+    /// the counter and dumping the goods there, for instance. That is not
+    /// "the alarm is rising a bit faster", it is the alarm going off, and the
+    /// difference has to be immediate and obvious.
+    /// </summary>
+    /// <param name="amount">How much to add. Usually a fraction of the meter.</param>
+    public void Spike(float amount)
+    {
+        Level = MathHelper.Clamp(Level + amount, 0f, 1f);
+    }
 }
 
 /// <summary>Why the alarm is currently rising (or calm).</summary>

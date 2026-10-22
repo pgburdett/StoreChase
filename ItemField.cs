@@ -151,6 +151,36 @@ public class ItemField
     }
 
     /// <summary>
+    /// A thief reaching the counter with loot: the goods go down on the till
+    /// and the alarm spikes.
+    ///
+    /// This is the thief's escape, and it is a losing one. Bolting for the
+    /// counter does not win the round — the item is dropped, not secured, so
+    /// the player still has to pick it up and carry it behind the counter. It
+    /// buys the thief time and moves the goods somewhere inconvenient, and it
+    /// costs the round a big chunk of alarm.
+    ///
+    /// Note the difference from <see cref="DropFrom"/>, which is the tackle
+    /// case: a *tackled* thief's goods on the counter cell count as recovered,
+    /// because catching the thief is the point. Here the thief got there on
+    /// its own, so the goods are merely dumped.
+    /// </summary>
+    /// <returns>The item that was dumped, or null if the critter had nothing.</returns>
+    public LootItem? AbandonAtCounter(Critter carrier, GridPos where)
+    {
+        var carried = _items.FirstOrDefault(i => i.Carrier == carrier && i.State == LootState.Carried);
+        if (carried == null) return null;
+
+        carried.State = LootState.Loose;
+        carried.Carrier = null;
+        carried.Cell = where;
+        carried.WorldPos = CellCenter(where);
+        carried.AgeSeconds = 0f;
+        ItemDropped?.Invoke(carried);
+        return carried;
+    }
+
+    /// <summary>
     /// The player walking onto an item. Returns it if something was picked up.
     /// </summary>
     public LootItem? TryPickUp(GridPos playerCell)

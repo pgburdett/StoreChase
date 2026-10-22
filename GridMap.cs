@@ -16,41 +16,32 @@ namespace StoreChase
         /// <summary>Map height in cells.</summary>
         public int Height { get; }
 
-        /// <summary>World units per cell (informational — systems use their own copy).</summary>
-        public int CellSize { get; }
+        /// <summary>
+        /// The floor plan this map was built from. Kept so systems that need
+        /// to reason about the store's shape (the camera framing it, the HUD
+        /// minimap) can ask the plan rather than reverse-engineering the grid.
+        /// </summary>
+        public StoreLayout Layout { get; }
 
         private readonly int[,] _cells;
 
-        /// <summary>Creates the store map from the hardcoded layout.</summary>
-        public GridMap(int cellSize = 32)
+        /// <summary>Creates a map from a floor plan.</summary>
+        public GridMap(StoreLayout layout)
         {
-            CellSize = cellSize;
+            Layout = layout ?? throw new ArgumentNullException(nameof(layout));
 
-            // Simple "store" layout: outer walls + aisle shelves.
-            // Feel free to redraw this — 1 = shelf, 0 = walkable aisle.
-            string[] layout = new[]
-            {
-                "111111111111111111",
-                "100000000000000001",
-                "101110111011101101",
-                "101110111011101101",
-                "100000000000000001",
-                "101110111011101101",
-                "101110111011101101",
-                "100000000000000001",
-                "101110111011101101",
-                "101110111011101101",
-                "100000000000000001",
-                "111111111111111111",
-            };
-
-            Height = layout.Length;
-            Width = layout[0].Length;
+            Height = layout.Height;
+            Width = layout.Width;
             _cells = new int[Width, Height];
 
             for (int y = 0; y < Height; y++)
                 for (int x = 0; x < Width; x++)
-                    _cells[x, y] = layout[y][x] == '1' ? 1 : 0;
+                    _cells[x, y] = StoreLayout.IsBlocked(layout.Rows[y][x]) ? 1 : 0;
+        }
+
+        /// <summary>Creates a map from one of the built-in floor plans.</summary>
+        public GridMap() : this(StoreLayouts.Standard)
+        {
         }
 
         /// <summary>True if the cell is open floor (not a shelf/wall and in bounds).</summary>
@@ -66,12 +57,21 @@ namespace StoreChase
         // player has to reach to secure stolen goods. It is a normal walkable
         // row in the layout, so this is data rather than geometry — the same
         // cells get the counter texture drawn on them.
-        /// <summary>True if the cell is part of the front counter (the player's goal).</summary>
-        public bool IsCounter(int x, int y) => y == CounterRow && x >= CounterStart && x <= CounterEnd;
+        //
+        // These were constants while there was exactly one store. They now
+        // come from the layout, so a bigger store can put its till wherever
+        // the floor plan says.
+        /// <summary>The row the counter runs along.</summary>
+        public int CounterRow => Layout.CounterRow;
 
-        public const int CounterRow = 1;
-        public const int CounterStart = 6;
-        public const int CounterEnd = 11;
+        /// <summary>The first column of the counter.</summary>
+        public int CounterStart => Layout.CounterStart;
+
+        /// <summary>The last column of the counter (inclusive).</summary>
+        public int CounterEnd => Layout.CounterEnd;
+
+        /// <summary>True if the cell is part of the front counter (the player's goal).</summary>
+        public bool IsCounter(int x, int y) => Layout.IsCounter(x, y);
 
         // How tall the counter slab is drawn, in world units. Lives here beside
         // the counter cells themselves so Game1 (which draws it) and ItemField

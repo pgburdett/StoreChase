@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The headless harness. A console app that references the game and exercises
+    the parts of it that don't need a GraphicsDevice.
+
+    Why a separate project rather than a test framework: the game has no test
+    project and no CI, and the checks here are mostly *simulations* (play whole
+    rounds headlessly, rasterize the rig, measure geometry) rather than
+    assertions about single functions. A console app with plain assertions
+    keeps the dependency list empty and lets the same code run as a smoke test
+    after any change.
+
+    Run it with:  dotnet run (project) harness/StoreChase.Harness
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>StoreChase.Harness</RootNamespace>
+    <AssemblyName>StoreChase.Harness</AssemblyName>
+    <!-- The game is an Exe with a top-level statement entry point; referencing
+         it from another Exe is fine as long as this project has its own
+         entry point, which it does (see Program.cs). -->
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\StoreChase.csproj" />
+  </ItemGroup>
+
+</Project>

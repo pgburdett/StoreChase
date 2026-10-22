@@ -29,6 +29,14 @@ namespace StoreChase
         private const float FreeMoveSpeed = 6f; // world units per second (first-person)
         private const float FreeRadius = 0.35f; // collision radius for free movement (world units)
 
+        /// <summary>
+        /// The player's grid speed, in cells per second.
+        ///
+        /// Public because the store's alarm rates are scaled by how long a
+        /// round takes to clear, and that calculation needs the speed.
+        /// </summary>
+        public const float GridSpeed = MoveSpeed;
+
         private readonly float _cellSize;
 
         private Point _heldDirection = Point.Zero;
@@ -83,9 +91,19 @@ namespace StoreChase
 
         private void UpdateGrid(GameTime gameTime, GridMap map, Vector2 move)
         {
-            // Only update the held direction when the device reports one, so
-            // releasing mid-tile keeps the existing grid-movement feel.
-            if (move != Vector2.Zero)
+            // The direction being asked for right now. Releasing the keys
+            // stops the player.
+            //
+            // This used to only update the held direction when the device
+            // reported one, "so releasing mid-tile keeps the existing
+            // grid-movement feel". But the held direction was then reused to
+            // start the *next* tile as well, so a player who let go of the
+            // keys kept walking in that direction until they ran into a
+            // shelf — there was no way to stand still in the isometric view.
+            // The held direction is now only used to finish the tile already
+            // in progress.
+            bool hasInput = move != Vector2.Zero;
+            if (hasInput)
                 _heldDirection = new Point((int)move.X, (int)move.Y);
 
             bool moving = _t < 1f;
@@ -93,13 +111,19 @@ namespace StoreChase
             if (!moving)
             {
                 Cell = _to;
-                var candidate = new GridPos(Cell.X + _heldDirection.X, Cell.Y + _heldDirection.Y);
-                if ((_heldDirection.X != 0 || _heldDirection.Y != 0) && map.IsWalkable(candidate.X, candidate.Y))
+
+                // Only start a new tile while the player is actually asking
+                // to move. A tile already under way is always finished.
+                if (hasInput)
                 {
-                    _from = Cell;
-                    _to = candidate;
-                    _t = 0f;
-                    moving = true;
+                    var candidate = new GridPos(Cell.X + _heldDirection.X, Cell.Y + _heldDirection.Y);
+                    if (map.IsWalkable(candidate.X, candidate.Y))
+                    {
+                        _from = Cell;
+                        _to = candidate;
+                        _t = 0f;
+                        moving = true;
+                    }
                 }
             }
 

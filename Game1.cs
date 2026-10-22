@@ -95,6 +95,18 @@ namespace StoreChase
         public const int CritterCount = 3;
         public const float CarryHeight = 1.5f;
 
+        /// <summary>
+        /// How much of the alarm meter a thief reaching the counter costs.
+        ///
+        /// It has to be big enough that the escape is a real loss rather than
+        /// a clever move — otherwise every thief would make for the till and
+        /// dump the goods there, which is a lot easier than running away from
+        /// the player. It also has to be survivable: the round has to stay
+        /// winnable after one, because the player can still pick the goods up
+        /// off the till and finish the job.
+        /// </summary>
+        public const float CounterDropAlarmSpike = 0.25f;
+
         public Game1()
         {
             _graphics = new GraphicsDeviceManager(this);
@@ -104,7 +116,7 @@ namespace StoreChase
 
         protected override void Initialize()
         {
-            _map = new GridMap();
+            _map = new GridMap(StoreLayouts.BigBox);
 
             _graphics.PreferredBackBufferWidth = 1600;
             _graphics.PreferredBackBufferHeight = 1200;
@@ -153,7 +165,7 @@ namespace StoreChase
         /// </summary>
         private void StartRound()
         {
-            _player = new Player(new GridPos(1, 1), CellSize);
+            _player = new Player(_map.Layout.PlayerStart, CellSize);
 
             _critters.Clear();
 
@@ -174,6 +186,13 @@ namespace StoreChase
 
             _alarm ??= new AlarmSystem();
             _alarm.Reset();
+
+            // Scale the alarm to the store. The rates are per-second and were
+            // tuned against the small reference floor plan; a bigger store is
+            // further to walk, so at the same rates the meter fills before
+            // the round can be cleared. Scaling by the store's size keeps the
+            // same amount of alarm budget in a round either way.
+            _alarm.RateScale = _map.Layout.AlarmScale(LootCount, Player.GridSpeed);
 
             _ball ??= new Ball();
             _ball.Configure(CellSize);
@@ -204,20 +223,35 @@ namespace StoreChase
         /// </summary>
         private IEnumerable<GridPos> SpawnPoints()
         {
-            var start = new GridPos(1, 1);
+            var start = _map.Layout.PlayerStart;
+
+            // Walking distance from the player, not Manhattan: the store has
+            // shelves in it now, and a cell can be close in a straight line and
+            // ten aisles away on foot.
+            var dist = _map.DistanceMapFrom(start);
+
             var candidates = _map.WalkableCells()
                 .Where(c => !_map.IsCounter(c.X, c.Y))
-                .Where(c => Math.Abs(c.X - start.X) + Math.Abs(c.Y - start.Y) > 5)
+                .Where(c => dist[c.X, c.Y] != int.MaxValue && dist[c.X, c.Y] > 5)
                 .ToList();
 
-            if (candidates.Count == 0) yield return start;
-            for (int i = 0; i < CritterCount && candidates.Count > 0; i++)
+            if (candidates.Count == 0) { yield return start; yield break; }
+
+            // Bias toward the far end of the store so the round opens with a
+            // moment of quiet before anything happens. The old code took "the
+            // far half of the candidate list", which was only equivalent to
+            // "far away" when the list happened to be in row-major order and
+            // the store was one screen wide.
+            var furthest = candidates.Max(c => dist[c.X, c.Y]);
+            int near = (int)(furthest * 0.55f);
+            var far = candidates.Where(c => dist[c.X, c.Y] >= near).ToList();
+            if (far.Count == 0) far = candidates;
+
+            for (int i = 0; i < CritterCount && far.Count > 0; i++)
             {
-                // Bias toward the far half of the store so the round opens with
-                // a moment of quiet before anything happens.
-                int idx = _rng.Next(candidates.Count / 2, candidates.Count);
-                yield return candidates[idx];
-                candidates.RemoveAt(idx);
+                int idx = _rng.Next(far.Count);
+                yield return far[idx];
+                far.RemoveAt(idx);
             }
         }
 
@@ -629,6 +663,30 @@ namespace StoreChase
                 if (_catAnims.TryGetValue(critter, out var anim))
                     anim.Update(BuildCatAnimInput(critter, dt));
 
+                // A thief that reaches the counter with loot dumps it on the
+                // till. This is the thief's escape plan and it is a losing
+                // one: the goods are dropped rather than secured, so the
+                // player still has to collect them, but the alarm takes a
+                // hard hit for it.
+                if (critter.JustArrived && critter.Carrying &&
+                    _map.IsCounter(critter.Cell.X, critter.Cell.Y))
+                {
+                    var dumped = _items.AbandonAtCounter(critter, critter.Cell);
+                    critter.Carrying = false;
+                    if (dumped != null)
+                    {
+                        // The spike is deliberately NOT scaled with the store.
+                        // The rates are per-second, and a bigger round lasts
+                        // longer, so they scale. The spike is an absolute
+                        // event — a fraction of the meter, gone in one go —
+                        // and a fixed fraction means the same thing in every
+                        // store.
+                        _alarm.Spike(CounterDropAlarmSpike);
+                        Sfx.Play(SfxId.Drop, volume: 0.7f);
+                        EventSystem.Instance.Publish(new ItemStolenEvent(critter.Profile.Name));
+                    }
+                }
+
                 if (critter.Tackled)
                 {
                     // A tackle makes it drop whatever it had, right here.
@@ -676,10 +734,12 @@ namespace StoreChase
 
             critter.CanSeePlayer = couldSee;
 
-            // Judged from the player's eye: at head height in first person, and
-            // from above in the isometric view (where the 90-degree cone means
-            // anything in the store counts as visible, which is exactly the
-            // asymmetry that makes first-person worth switching to).
+            // Judged from the player's eye. In first person that's a real cone
+            // — the cat has to be in front of you. In the isometric view the
+            // camera looks straight down, so the camera falls back to "is it
+            // on screen", which is now a meaningful question: the viewport is
+            // a window onto a store that may be bigger than the screen, so a
+            // cat across the store is genuinely out of sight.
             float eyeHeight = _camera.Mode == CameraViewMode.FirstPerson
                 ? Camera.FirstPersonEyeHeight
                 : 1f;
@@ -806,11 +866,11 @@ namespace StoreChase
         /// </summary>
         private void DrawCounter()
         {
-            for (int x = GridMap.CounterStart; x <= GridMap.CounterEnd; x++)
+            for (int x = _map.CounterStart; x <= _map.CounterEnd; x++)
             {
-                if (!_map.IsCounter(x, GridMap.CounterRow)) continue;
+                if (!_map.IsCounter(x, _map.CounterRow)) continue;
                 var world = Matrix.CreateScale(CellSize * 0.9f, GridMap.CounterHeight, CellSize * 0.5f)
-                            * Matrix.CreateTranslation(x * CellSize, 0f, GridMap.CounterRow * CellSize);
+                            * Matrix.CreateTranslation(x * CellSize, 0f, _map.CounterRow * CellSize);
                 DrawMesh(_propVerts, world, _textures.Counter);
             }
         }

@@ -16,6 +16,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The harness lives under the repo root but is its own project with its
+         own entry point. Without this the default **/*.cs glob would compile
+         the harness's Program.cs into the game as well, which collides with
+         the game's top-level statements (CS7022). -->
+    <Compile Remove="harness\**\*.cs" />
+    <None Include="harness\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The cat model files are loaded at runtime by ObjLoader.cs, not
          through the MGCB content pipeline (see ObjLoader.cs for why).
          Because of that, MSBuild has no reason to know about them unless

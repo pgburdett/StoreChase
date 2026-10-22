@@ -38,6 +38,15 @@ namespace StoreChase
         /// <summary>The current camera mode.</summary>
         public CameraViewMode Mode { get; private set; } = CameraViewMode.Isometric;
 
+        /// <summary>
+        /// The world point the camera is centred on, in the isometric view.
+        ///
+        /// This is the player, plus any manual panning, clamped so the view
+        /// stays over the floor plan. It is the point the camera looks at, so
+        /// it is also the centre of the visible area.
+        /// </summary>
+        public Vector3 FocusPoint { get; private set; }
+
         // Pan is an offset (in world units) applied to where the camera
         // looks; zoom scales the orthographic view size / camera distance;
         // tilt blends from straight-down orthographic (0) to an angled
@@ -54,7 +63,17 @@ namespace StoreChase
         private readonly float _mapWidthWorld;
         private readonly float _mapHeightWorld;
         private readonly float _cellSize;
-        private readonly GraphicsDevice _graphicsDevice;
+        private readonly GraphicsDevice? _graphicsDevice;
+
+        // The viewport's aspect ratio. Cached rather than read from the
+        // device every frame, and settable without one, so the camera's
+        // framing math can be tested headlessly.
+        private float _aspectRatio;
+
+        // Where the camera is looking, in world X/Z. In the isometric view
+        // this is the player, offset by any manual panning; in first person
+        // it's the player's head.
+        private Vector2 _followTarget;
 
         // Zoom 1.0 is "standard". Bigger = zoomed out (camera pulled back),
         // smaller = zoomed in. (Inverse of a classic camera convention — kept
@@ -65,6 +84,15 @@ namespace StoreChase
         public const float ZoomStep = 0.1f;  // per wheel notch
         public const float MaxTiltDegrees = 80f; // near-horizontal, but never quite level
         public const float TiltSpeed = 45f;  // degrees per second
+
+        // How many cells of the store are visible across the screen at zoom 1.
+        //
+        // This is what makes the store scroll: the viewport is a fixed window
+        // onto the floor plan rather than a fit-to-everything view, so a store
+        // wider than this needs the camera to follow the player. It used to be
+        // "the whole map, plus padding", which meant the view size grew with
+        // the store and there was nothing to scroll.
+        public const float ViewCellsWide = 16f;
 
         // First-person: look radians per look unit (≈mouse pixel), the eye
         // height from PersonMesh's head center, and the FOV/near plane.
@@ -80,6 +108,31 @@ namespace StoreChase
             _mapWidthWorld = mapWidthWorld;
             _mapHeightWorld = mapHeightWorld;
             _cellSize = cellSize;
+            _aspectRatio = graphicsDevice.Viewport.AspectRatio;
+
+            UpdateCameraMatrices();
+        }
+
+        /// <summary>
+        /// Creates a camera with no graphics device.
+        ///
+        /// The framing math — the viewport size, the follow target, the clamp
+        /// to the store's edges — needs nothing but the map's dimensions and
+        /// an aspect ratio. That makes it testable without a display, which
+        /// is the only way to check that the scrolling camera actually
+        /// scrolls rather than reading the code and hoping.
+        /// </summary>
+        /// <param name="aspectRatio">The viewport's width divided by its height.</param>
+        /// <param name="mapWidthWorld">The store's width in world units.</param>
+        /// <param name="mapHeightWorld">The store's height in world units.</param>
+        /// <param name="cellSize">World units per grid cell.</param>
+        public Camera(float aspectRatio, float mapWidthWorld, float mapHeightWorld, float cellSize)
+        {
+            _graphicsDevice = null;
+            _mapWidthWorld = mapWidthWorld;
+            _mapHeightWorld = mapHeightWorld;
+            _cellSize = cellSize;
+            _aspectRatio = aspectRatio;
 
             UpdateCameraMatrices();
         }
@@ -96,14 +149,22 @@ namespace StoreChase
         // Rebuilds view/projection from current pan, zoom, and tilt.
         private void UpdateCameraMatrices()
         {
-            Vector3 center = new(_mapWidthWorld / 2f + _panOffset.X, 0f,
-                                  _mapHeightWorld / 2f + _panOffset.Y);
+            float aspect = _aspectRatio;
 
-            // Distance from center to camera scales with zoom, same idea as
-            // the orthographic view size before — bigger distance/zoom = more
-            // zoomed out. Used for both the orthographic and perspective paths
-            // so zoom feels roughly continuous across the tilt transition.
-            float baseDistance = 30f * Zoom;
+            // The viewport size in world units. It is a fixed window onto the
+            // store: ViewCellsWide cells across at zoom 1, scaled by zoom from
+            // there. The old version derived the size from the map's own
+            // dimensions, which meant a bigger store zoomed itself out to fit
+            // and there was never anything to scroll.
+            float viewWidth = ViewCellsWide * _cellSize * Zoom;
+            float viewHeight = viewWidth / aspect;
+
+            // Where the camera looks: the follow target (the player), plus any
+            // manual panning. Clamped so the view never leaves the store —
+            // otherwise the camera would show the void beyond the walls.
+            Vector2 center = ClampToMap(_followTarget + _panOffset, viewWidth, viewHeight);
+            Vector3 lookAt = new(center.X, 0f, center.Y);
+            FocusPoint = lookAt;
 
             float tiltRad = MathHelper.ToRadians(TiltDegrees);
 
@@ -120,23 +181,26 @@ namespace StoreChase
             // The offset is a fraction of the camera distance, so it scales with
             // zoom and stays far below a pixel of screen parallax.
             const float upNudge = 0.0001f;
-            Vector3 cameraPos = center + new Vector3(
+
+            // Distance back from the focus point. Derived from the viewport
+            // height so that tilting keeps roughly the same amount of store
+            // in frame — a fixed distance would make the view shrink and grow
+            // as the player zoomed.
+            float baseDistance = viewHeight * 1.6f + 8f;
+
+            Vector3 cameraPos = lookAt + new Vector3(
                 0f,
                 baseDistance * (float)Math.Cos(tiltRad),
                 baseDistance * (float)Math.Sin(tiltRad) + baseDistance * upNudge);
 
             Vector3 upVector = Vector3.Up;
-            View = Matrix.CreateLookAt(cameraPos, center, upVector);
-
-            float aspect = _graphicsDevice.Viewport.AspectRatio;
+            View = Matrix.CreateLookAt(cameraPos, lookAt, upVector);
 
             if (TiltDegrees < 1f)
             {
                 // Effectively straight down: use true orthographic (no
                 // perspective distortion), matching the original design.
-                float baseWidth = (_mapWidthWorld + _cellSize * 2) * Zoom;
-                float baseHeight = (_mapHeightWorld + _cellSize * 2) * Zoom;
-                Projection = Matrix.CreateOrthographic(baseWidth, baseHeight, 0.1f, 200f);
+                Projection = Matrix.CreateOrthographic(viewWidth, viewHeight, 0.1f, 200f);
             }
             else
             {
@@ -147,6 +211,30 @@ namespace StoreChase
                 Projection = Matrix.CreatePerspectiveFieldOfView(
                     MathHelper.ToRadians(50f), aspect, 0.1f, 300f);
             }
+        }
+
+        // Keeps the centre of the view inside the store.
+        //
+        // The view follows the player, but the player can walk right up to a
+        // wall, and a view centred there would show half the screen full of
+        // nothing outside the store. So the centre is pushed back in until the
+        // whole viewport sits on the floor plan. When the store is smaller
+        // than the viewport (a small map at maximum zoom-out) the centre is
+        // pinned to the middle of the store instead, so it stays centred.
+        private Vector2 ClampToMap(Vector2 center, float viewWidth, float viewHeight)
+        {
+            float halfW = viewWidth / 2f;
+            float halfH = viewHeight / 2f;
+
+            float x = viewWidth >= _mapWidthWorld
+                ? _mapWidthWorld / 2f
+                : Math.Clamp(center.X, halfW, _mapWidthWorld - halfW);
+
+            float y = viewHeight >= _mapHeightWorld
+                ? _mapHeightWorld / 2f
+                : Math.Clamp(center.Y, halfH, _mapHeightWorld - halfH);
+
+            return new Vector2(x, y);
         }
 
         /// <summary>
@@ -177,6 +265,11 @@ namespace StoreChase
                 return;
             }
 
+            // The isometric view follows the player. This is what makes a store
+            // bigger than the screen work: the camera tracks where the player
+            // is and the viewport is a fixed window onto the floor plan.
+            _followTarget = new Vector2(playerWorldPos.X, playerWorldPos.Z);
+
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
             // Pan speed scales with zoom so it feels consistent whether
@@ -184,10 +277,12 @@ namespace StoreChase
             float speed = PanSpeed * Zoom * dt;
             _panOffset += input.CameraPan * speed;
 
-            // Clamp panning so you can't scroll the camera arbitrarily far
-            // from the map — keeps the store roughly in view.
-            float panLimitX = _mapWidthWorld * 0.75f;
-            float panLimitY = _mapHeightWorld * 0.75f;
+            // Pan is an offset from the player, not an absolute camera
+            // position, so it can't drift the view away from the player
+            // entirely. The clamp is generous enough to let the player look
+            // ahead of themselves down a long aisle.
+            float panLimitX = _mapWidthWorld * 0.5f;
+            float panLimitY = _mapHeightWorld * 0.5f;
             _panOffset.X = MathHelper.Clamp(_panOffset.X, -panLimitX, panLimitX);
             _panOffset.Y = MathHelper.Clamp(_panOffset.Y, -panLimitY, panLimitY);
 
@@ -230,46 +325,79 @@ namespace StoreChase
             View = Matrix.CreateLookAt(eye, eye + forward, Vector3.Up);
             Projection = Matrix.CreatePerspectiveFieldOfView(
                 MathHelper.ToRadians(FirstPersonFovDegrees),
-                _graphicsDevice.Viewport.AspectRatio,
+                _aspectRatio,
                 FirstPersonNearPlane, 300f);
         }
 
-        // Is a world point inside what the camera is currently pointed at?
-        //
-        // This is the difference between the two camera modes as far as the
-        // game is concerned. Overhead, the whole store is in frame and the
-        // answer is effectively "yes" for anything in the room, so a cat being
-        // watched never notices. In first person it's a real cone, which is what
-        // lets a Nervous cat be pinned just by looking at it.
-        //
-        // The cone is a generous half-angle rather than the exact frustum: the
-        // gameplay question is "am I pointed roughly at that cat", not "is it
-        // inside a pixel-perfect frustum", and a narrow cone would make the
-        // interaction fiddly.
         /// <summary>
-        /// Is a world point inside what the camera is currently pointed at?
+        /// Is a world point inside what the camera is currently pointing at?
         ///
         /// This is the difference between the two camera modes as far as the
-        /// game is concerned. Overhead, the whole store is in frame and the
-        /// answer is effectively "yes" for anything in the room, so a cat being
-        /// watched never notices. In first person it's a real cone, which is what
-        /// lets a Nervous cat be pinned just by looking at it.
+        /// game is concerned.
+        ///
+        /// In first person it's a real cone: roughly what the player is
+        /// looking at, which is what lets a Nervous cat be pinned just by
+        /// looking at it. The cone is a generous half-angle rather than the
+        /// exact frustum: the gameplay question is "am I pointed roughly at
+        /// that cat", not "is it inside a pixel-perfect frustum", and a narrow
+        /// cone would make the interaction fiddly.
+        ///
+        /// In the isometric view the camera looks straight down, so a cone
+        /// would cover the entire store and mean nothing. Instead the test is
+        /// "is it on screen" — the viewport is a window onto a floor plan that
+        /// can be bigger than the screen, so a cat across the store is
+        /// genuinely out of sight and genuinely not pinned. Which is the point
+        /// of the two modes being different: the overhead view is a wide but
+        /// bounded awareness, first person is a narrow, deliberate one.
         /// </summary>
         public bool IsInViewCone(Vector3 eye, Vector3 target)
         {
-            Vector3 to = target - eye;
+            if (Mode == CameraViewMode.FirstPerson)
+            {
+                Vector3 to = target - eye;
 
-            // Anything right on top of the camera counts as watched.
-            float sqrLen = to.LengthSquared();
-            if (sqrLen < 0.0001f) return true;
-            to /= MathF.Sqrt(sqrLen);
+                // Anything right on top of the camera counts as watched.
+                float sqrLen = to.LengthSquared();
+                if (sqrLen < 0.0001f) return true;
+                to /= MathF.Sqrt(sqrLen);
 
-            float halfAngle = Mode == CameraViewMode.FirstPerson
-                ? MathHelper.ToRadians(FirstPersonFovDegrees * 0.6f)
-                : MathHelper.ToRadians(90f);
+                float halfAngle = MathHelper.ToRadians(FirstPersonFovDegrees * 0.6f);
 
-            Vector3 forward = FacingDirection;
-            return Vector3.Dot(forward, to) >= MathF.Cos(halfAngle);
+                Vector3 forward = FacingDirection;
+                return Vector3.Dot(forward, to) >= MathF.Cos(halfAngle);
+            }
+
+            return IsOnScreen(target);
+        }
+
+        /// <summary>
+        /// Is a world point inside the current viewport?
+        ///
+        /// Projects the point through the view-projection matrix and checks it
+        /// against the normalised device coordinate range. This works for both
+        /// the orthographic overhead view and the tilted perspective one,
+        /// because it asks the same question the screen does: is this point
+        /// drawn on the glass.
+        /// </summary>
+        public bool IsOnScreen(Vector3 worldPoint)
+        {
+            Vector4 clip = Vector4.Transform(worldPoint, ViewProjection);
+
+            // Behind the camera: w goes negative and the perspective divide
+            // flips the sign, so a naive bounds check would call it visible.
+            if (clip.W <= 0.0001f) return false;
+
+            float ndcX = clip.X / clip.W;
+            float ndcY = clip.Y / clip.W;
+            float ndcZ = clip.Z / clip.W;
+
+            // NDC x/y are -1..1 on screen; z is 0..1 between near and far.
+            // A margin keeps a cat right at the edge of the frame from
+            // flickering between watched and not as the camera scrolls.
+            const float margin = 0.02f;
+            return ndcX >= -1f - margin && ndcX <= 1f + margin
+                && ndcY >= -1f - margin && ndcY <= 1f + margin
+                && ndcZ >= 0f && ndcZ <= 1f;
         }
 
         /// <summary>

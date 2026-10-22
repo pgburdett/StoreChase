@@ -266,9 +266,9 @@ public class SmartAnimalAI : ICritterAI
     {
         GridPos? best = null;
         int bestDist = int.MaxValue;
-        for (int x = GridMap.CounterStart; x <= GridMap.CounterEnd; x++)
+        for (int x = map.CounterStart; x <= map.CounterEnd; x++)
         {
-            var cell = new GridPos(x, GridMap.CounterRow);
+            var cell = new GridPos(x, map.CounterRow);
             if (!map.IsWalkable(cell.X, cell.Y)) continue;
             int d = Math.Abs(cell.X - from.X) + Math.Abs(cell.Y - from.Y);
             if (d < bestDist) { bestDist = d; best = cell; }
