@@ -102,7 +102,7 @@ public static class StoreTextures
         float dEdge = MathF.Min(WrapDistance(x), WrapDistance(y));
 
         // Slab + fine noise.
-        Color tile = Speckle(new Color(224, 220, 210), x, y, w, h, 9091u, 0.04f);
+        Color tile = Speckle(new Color(206, 203, 196), x, y, w, h, 9091u, 0.035f);
 
         // Chips: a hashed dot per cell of a 24x24 lattice. The neighbourhood
         // scan and the wrapped lattice indices are what let a dot straddle
@@ -144,7 +144,7 @@ public static class StoreTextures
 
         // Grout ring around every tile edge, softened so mips don't shimmer.
         float edge = MathHelper.Clamp(dEdge / groutFraction - 0.5f, 0f, 1f);
-        return Color.Lerp(new Color(108, 104, 96), tile, edge * edge * (3f - 2f * edge));
+        return Color.Lerp(new Color(124, 121, 114), tile, edge * edge * (3f - 2f * edge));
     }
 
     // The shelf unit's atlas. Brushed steel (vertical striations, a panel

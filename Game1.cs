@@ -1791,65 +1791,68 @@ namespace StoreChase
             GraphicsDevice.Clear(new Color(20, 20, 25));
             GraphicsDevice.DepthStencilState = DepthStencilState.Default; // enable depth testing for 3D
 
-            _effect.View = _camera.View;
-            _effect.Projection = _camera.Projection;
-            _effect.LightingEnabled = true;
-
-            // The store's lighting reacts to the alarm. A store that is about
-            // to go off does not look like a calm one, and the ambient tint
-            // is the cheapest way to say so — it needs no extra geometry and
-            // it affects every surface in the room at once.
-            // A power cut darkens the whole store on top of the alarm tint.
-            float light = _darkTimer > 0f ? DarkLightFactor : 1f;
-            // Day/night: a slow brightness pulse, dimmer at "night".
-            float day = 0.85f + 0.15f * MathF.Sin(_dayPhase * MathF.Tau);
-            if (_rainActive > 0f) day *= 0.9f;
-            _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light * day;
-            _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
-            DrawMesh(_floorVerts, FloorWorld, _textures.Floor);
-
-            // Blocked cells: the border ring as plain wall, every interior
-            // cell as a stocked shelf unit picked by style (aisle colour,
-            // run end, open sides, product variant — see ShelfStyleFor).
-            // The counter row is drawn in a different material so the goal is
-            // visible from across the store.
-            for (int y = 0; y < _map.Height; y++)
+            if (_phase != RunPhase.Title)
             {
-                for (int x = 0; x < _map.Width; x++)
-                {
-                    if (_map[x, y] != 1)
-                        continue;
+                _effect.View = _camera.View;
+                _effect.Projection = _camera.Projection;
+                _effect.LightingEnabled = true;
 
-                    if (x == 0 || y == 0 || x == _map.Width - 1 || y == _map.Height - 1)
+                // The store's lighting reacts to the alarm. A store that is about
+                // to go off does not look like a calm one, and the ambient tint
+                // is the cheapest way to say so — it needs no extra geometry and
+                // it affects every surface in the room at once.
+                // A power cut darkens the whole store on top of the alarm tint.
+                float light = _darkTimer > 0f ? DarkLightFactor : 1f;
+                // Day/night: a slow brightness pulse, dimmer at "night".
+                float day = 0.85f + 0.15f * MathF.Sin(_dayPhase * MathF.Tau);
+                if (_rainActive > 0f) day *= 0.9f;
+                _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light * day;
+                _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
+                DrawMesh(_floorVerts, FloorWorld, _textures.Floor);
+
+                // Blocked cells: the border ring as plain wall, every interior
+                // cell as a stocked shelf unit picked by style (aisle colour,
+                // run end, open sides, product variant — see ShelfStyleFor).
+                // The counter row is drawn in a different material so the goal is
+                // visible from across the store.
+                for (int y = 0; y < _map.Height; y++)
+                {
+                    for (int x = 0; x < _map.Width; x++)
                     {
-                        var wall = Matrix.CreateScale(CellSize, CellSize * 1.5f, CellSize)
-                                   * Matrix.CreateTranslation(x * CellSize, 0f, y * CellSize);
-                        DrawMesh(_wallVerts, wall, _textures.Wall);
-                    }
-                    else
-                    {
-                        var style = ShelfStyleFor(x, y);
-                        var mesh = _shelfVerts[ShelfSlot(style)][style.Variant];
-                        // Slightly inset along X so run sections read as
-                        // separate gondolas; full size along Z so the two
-                        // rows of a block close into one unit.
-                        var shelf = Matrix.CreateScale(CellSize * 0.96f, CellSize * 1.5f, CellSize)
-                                    * Matrix.CreateTranslation(x * CellSize, 0f, y * CellSize);
-                        DrawMesh(mesh, shelf, _textures.Unit);
+                        if (_map[x, y] != 1)
+                            continue;
+
+                        if (x == 0 || y == 0 || x == _map.Width - 1 || y == _map.Height - 1)
+                        {
+                            var wall = Matrix.CreateScale(CellSize, CellSize * 1.5f, CellSize)
+                                       * Matrix.CreateTranslation(x * CellSize, 0f, y * CellSize);
+                            DrawMesh(_wallVerts, wall, _textures.Wall);
+                        }
+                        else
+                        {
+                            var style = ShelfStyleFor(x, y);
+                            var mesh = _shelfVerts[ShelfSlot(style)][style.Variant];
+                            // Slightly inset along X so run sections read as
+                            // separate gondolas; full size along Z so the two
+                            // rows of a block close into one unit.
+                            var shelf = Matrix.CreateScale(CellSize * 0.96f, CellSize * 1.5f, CellSize)
+                                        * Matrix.CreateTranslation(x * CellSize, 0f, y * CellSize);
+                            DrawMesh(mesh, shelf, _textures.Unit);
+                        }
                     }
                 }
-            }
 
-            DrawCounter();
-            DrawPlayer(gameTime);
-            DrawLoot();
-            DrawPowerUps();
-            DrawHazards();
-            DrawBall();
-            DrawTrapsAndLaser();
-            DrawCritters(gameTime);
-            DrawCustomers(gameTime);
-            DrawFx();
+                DrawCounter();
+                DrawPlayer(gameTime);
+                DrawLoot();
+                DrawPowerUps();
+                DrawHazards();
+                DrawBall();
+                DrawTrapsAndLaser();
+                DrawCritters(gameTime);
+                DrawCustomers(gameTime);
+                DrawFx();
+            }
             if (_phase == RunPhase.Title)
                 _hud.DrawTitleScreen(BuildHudState());
             else
@@ -2262,8 +2265,8 @@ namespace StoreChase
         /// </summary>
         private static Vector3 AmbientForAlarm(float level)
         {
-            var calm = new Vector3(0.62f, 0.62f, 0.68f);
-            var alarmed = new Vector3(0.72f, 0.32f, 0.30f);
+            var calm = new Vector3(0.5f, 0.5f, 0.55f);
+            var alarmed = new Vector3(0.62f, 0.26f, 0.24f);
             return Vector3.Lerp(calm, alarmed, MathHelper.Clamp(level, 0f, 1f));
         }
 

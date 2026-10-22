@@ -220,48 +220,124 @@ public sealed class Hud
     public void DrawTitleScreen(in HudState state)
     {
         if (_font == null) return;
-        _spriteBatch.Begin();
         var vp = _graphicsDevice.Viewport;
-        int cx = vp.Width / 2;
+        int w = vp.Width, h = vp.Height;
+        int cx = w / 2;
+        float t = state.TitlePhase;
+        var font = _font;
+
+        _spriteBatch.Begin();
+
+        // --- Arcade cabinet backdrop -------------------------------------
+        // Deep indigo-black base so the neons pop.
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, h), new Color(6, 4, 14));
+
+        // Animated starfield: deterministic twinkle, cheap.
+        for (int i = 0; i < 90; i++)
+        {
+            uint n = (uint)(i * 7919 + 12345);
+            int sx = (int)(n % (uint)w);
+            int sy = (int)((n / (uint)w) % (uint)h);
+            float tw = 0.5f + 0.5f * MathF.Sin(t * 3f + i * 0.7f);
+            int a = (int)(60 + 195 * tw);
+            int sz = (i % 3 == 0) ? 2 : 1;
+            _spriteBatch.Draw(_uiPixel, new Rectangle(sx, sy, sz, sz),
+                new Color(180, 200, 255, a));
+        }
+
+        // Horizontal scanlines for that CRT feel.
+        for (int y = 0; y < h; y += 3)
+        {
+            _spriteBatch.Draw(_uiPixel, new Rectangle(0, y, w, 1),
+                new Color(0, 0, 0, 70));
+        }
+
+        // Neon side rails.
+        for (int i = 0; i < 6; i++)
+        {
+            int rx = 24 + i * 6;
+            int pulse = (int)(120 + 135 * (0.5f + 0.5f * MathF.Sin(t * 4f + i)));
+            _spriteBatch.Draw(_uiPixel, new Rectangle(rx, 40, 4, h - 80),
+                new Color(255, 60, 180, pulse));
+            _spriteBatch.Draw(_uiPixel, new Rectangle(w - rx - 4, 40, 4, h - 80),
+                new Color(60, 200, 255, pulse));
+        }
+
+        // Top/bottom marquee bars.
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, 28), new Color(255, 60, 180));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, h - 28, w, 28), new Color(60, 200, 255));
+        string marquee = "  *  STORE CHASE 3D  *  HEIST IN EVERY AISLE  *  INSERT COIN  *  ";
+        // scrolling marquee text (approx via offset)
+        int mo = (int)(t * 120f) % (font.MeasureString(marquee).X > 0 ? (int)font.MeasureString(marquee).X : 1);
+        // draw twice for seamless loop
+        for (int k = -1; k <= 1; k++)
+        {
+            _spriteBatch.DrawString(font, marquee,
+                new Vector2(-mo + k * (int)font.MeasureString(marquee).X + 8, 4),
+                new Color(20, 10, 30));
+        }
+
+        // --- Title glow backdrop -----------------------------------------
+        // A soft neon slab behind the rainbow title.
+        int titleY = 40;
+        for (int i = 6; i >= 1; i--)
+        {
+            int pad = i * 10;
+            int a = (int)(18 + i * 6);
+            _spriteBatch.Draw(_uiPixel,
+                new Rectangle(cx - 320 - pad, titleY - pad, 640 + pad * 2, 90 + pad * 2),
+                new Color(255, 80, 200, a));
+        }
 
         // Big rainbow title at the top.
         DrawRainbowTitle(state);
 
-        var font = _font;
-        string subtitle = "A heist in every aisle";
+        // Subtitle with neon cyan.
+        string subtitle = "A HEIST IN EVERY AISLE";
         var subSize = font.MeasureString(subtitle);
-        _spriteBatch.DrawString(font, subtitle, new Vector2(cx - subSize.X / 2, 90),
-            new Color(180, 180, 190));
+        _spriteBatch.DrawString(font, subtitle, new Vector2(cx - subSize.X / 2, 100),
+            new Color(120, 240, 255));
 
-        string prompt = "Press Enter to start";
+        // --- Press to start (arcade prompt) ------------------------------
+        string prompt = "PRESS  ENTER  TO  START";
         var promptSize = font.MeasureString(prompt);
-        float blink = (MathF.Sin(state.TitlePhase * 4f) + 1f) / 2f;
-        var promptColor = Color.Lerp(new Color(120, 120, 130), new Color(245, 235, 160), blink);
-        _spriteBatch.DrawString(font, prompt, new Vector2(cx - promptSize.X / 2, vp.Height / 2 - 20),
+        float blink = (MathF.Sin(state.TitlePhase * 6f) + 1f) / 2f;
+        var promptColor = Color.Lerp(new Color(255, 60, 180), new Color(255, 240, 120), blink);
+        // glow
+        for (int i = 3; i >= 1; i--)
+            _spriteBatch.DrawString(font, prompt,
+                new Vector2(cx - promptSize.X / 2 + i, vp.Height / 2 - 10 + i),
+                new Color(255, 60, 180, 40));
+        _spriteBatch.DrawString(font, prompt, new Vector2(cx - promptSize.X / 2, vp.Height / 2 - 10),
             promptColor);
 
-        // Controls hint.
+        // Controls hint panel.
         string[] hints = new[]
         {
-            "WASD move    Mouse look (V first-person)    E use    Click throw",
-            "1-9 shop between rounds    R restart    Esc quit",
+            "WASD  MOVE     MOUSE  LOOK (V FIRST-PERSON)     E  USE     CLICK  THROW",
+            "1-9  SHOP BETWEEN ROUNDS     R  RESTART     ESC  QUIT",
         };
-        int y = vp.Height / 2 + 40;
-        foreach (var h in hints)
+        int hy = vp.Height / 2 + 50;
+        // panel bg
+        _spriteBatch.Draw(_uiPixel, new Rectangle(cx - 420, hy - 8, 840, 60), new Color(20, 12, 40, 180));
+        foreach (var hh in hints)
         {
-            var hs = font.MeasureString(h);
-            _spriteBatch.DrawString(font, h, new Vector2(cx - hs.X / 2, y), new Color(120, 120, 135));
-            y += 22;
+            var hs = font.MeasureString(hh);
+            _spriteBatch.DrawString(font, hh, new Vector2(cx - hs.X / 2, hy), new Color(180, 190, 220));
+            hy += 24;
         }
 
-        // High score.
-        if (state.Coins > 0 || true)
-        {
-            string hs = $"Coins this run: {state.Coins}";
-            var hss = font.MeasureString(hs);
-            _spriteBatch.DrawString(font, hs, new Vector2(cx - hss.X / 2, vp.Height - 60),
-                new Color(245, 205, 110));
-        }
+        // Coins / high score.
+        string hs2 = $"COINS THIS RUN: {state.Coins}";
+        var hss = font.MeasureString(hs2);
+        _spriteBatch.DrawString(font, hs2, new Vector2(cx - hss.X / 2, vp.Height - 52),
+            new Color(255, 220, 100));
+
+        // Bottom credit line.
+        string credit = "(c) 2026 STORE CHASE ARCADE";
+        var cs = font.MeasureString(credit);
+        _spriteBatch.DrawString(font, credit, new Vector2(cx - cs.X / 2, vp.Height - 22),
+            new Color(20, 10, 30));
 
         _spriteBatch.End();
         _graphicsDevice.DepthStencilState = DepthStencilState.Default;
