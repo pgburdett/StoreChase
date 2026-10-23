@@ -132,6 +132,7 @@ namespace StoreChase
         private readonly List<Customer> _customers = new();
         private PersonPart[] _customerParts = null!;
         private readonly List<GridPos> _exits = new();
+    private GridPos _doorCell;
         private float _customerWalkPhase;
         private float _walkPhase; // drives the player's limb swing
 
@@ -541,6 +542,12 @@ namespace StoreChase
                     _exits.Add(cell);
             if (_exits.Count == 0)
                 foreach (var cell in _map.WalkableCells()) _exits.Add(cell);
+
+            // The store's door: a walkable border cell that acts as the
+            // entrance and exit. Customers enter through it and can escape
+            // the maze through it at random.
+            _doorCell = PickDoorCell(_map);
+            if (!_exits.Contains(_doorCell)) _exits.Add(_doorCell);
 
             const int customerCount = 3;
             for (int i = 0; i < customerCount; i++)
@@ -1097,7 +1104,7 @@ namespace StoreChase
             foreach (var customer in _customers)
             {
                 if (customer.Escaped) continue;
-                CustomerBrain.Decide(customer, _map, _player.Cell, _items, _rng, _exits);
+                CustomerBrain.Decide(customer, _map, _player.Cell, _items, _rng, _exits, _doorCell);
                 customer.Update(dt, _map);
 
                 if (!customer.IsMoving && customer.IsShoplifter && customer.Carrying == null)
@@ -1134,8 +1141,25 @@ namespace StoreChase
                     _camera.AddShake(0.12f);
                     Sfx.Play(SfxId.Tackle, volume: 0.6f);
                 }
+
+                // A shopper that reaches the door leaves the store; a new one
+                // enters through the same door so the aisles stay populated.
+                if (!customer.IsShoplifter && customer.JustArrived
+                    && customer.Cell == _doorCell)
+                {
+                    customer.MarkEscaped();
+                    _fx.Text(customer.WorldPos + new Vector3(0f, 1.5f, 0f),
+                        "left the store", new Color(180, 180, 200), 0.9f);
+                }
             }
             _customers.RemoveAll(c => c.Escaped);
+
+            // Keep the shopper population topped up through the door.
+            while (_customers.Count < 3)
+            {
+                _customers.Add(new Customer(_doorCell, CellSize,
+                    shoplifter: _rng.Next(4) == 0, _rng));
+            }
 
             UpdateCritters(simTime);
 
@@ -1285,7 +1309,38 @@ namespace StoreChase
         /// captures the current ball cell, loot target and stolen count — all of
         /// which can change at any moment.
         /// </summary>
-        private void UpdateCritters(GameTime gameTime)
+        private static GridPos PickDoorCell(GridMap map)
+    {
+        // Prefer a walkable cell on the top edge, near the centre, so the
+        // door reads as the store's entrance. Fall back to any walkable
+        // border cell, then to the first walkable cell.
+        GridPos best = default;
+        bool found = false;
+        int bestDist = int.MaxValue;
+        int cx = map.Width / 2;
+        foreach (var cell in map.WalkableCells())
+        {
+            if (cell.Y != 0) continue;
+            int d = Math.Abs(cell.X - cx);
+            if (d < bestDist) { bestDist = d; best = cell; found = true; }
+        }
+        if (!found)
+        {
+            foreach (var cell in map.WalkableCells())
+            {
+                if (cell.X != 0 && cell.Y != 0 && cell.X != map.Width - 1 && cell.Y != map.Height - 1) continue;
+                int d = Math.Abs(cell.X - cx) + Math.Abs(cell.Y - map.Height / 2);
+                if (d < bestDist) { bestDist = d; best = cell; found = true; }
+            }
+        }
+        if (!found)
+        {
+            foreach (var cell in map.WalkableCells()) { best = cell; found = true; break; }
+        }
+        return best;
+    }
+
+    private void UpdateCritters(GameTime gameTime)
         {
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
@@ -1874,6 +1929,7 @@ namespace StoreChase
                 }
 
                 DrawCounter();
+                DrawDoor();
                 DrawPlayer(gameTime);
                 DrawLoot();
                 DrawPowerUps();
@@ -1913,6 +1969,23 @@ namespace StoreChase
             }
         }
 
+        /// <summary>
+        /// Draws the store's door: a vertical slab on the floor at the door
+        /// cell, so customers have a visible entrance/exit to walk through.
+        /// </summary>
+        private void DrawDoor()
+        {
+            // Floor marker.
+            var floorWorld = Matrix.CreateScale(CellSize * 0.9f, 0.05f, CellSize * 0.9f)
+                           * Matrix.CreateTranslation(_doorCell.X * CellSize, 0.025f, _doorCell.Y * CellSize);
+            DrawMesh(_propVerts, floorWorld, _textures.Flat, new Color(120, 80, 50));
+
+            // Door slab.
+            var slabWorld = Matrix.CreateScale(CellSize * 0.8f, CellSize * 1.6f, CellSize * 0.15f)
+                          * Matrix.CreateTranslation(_doorCell.X * CellSize, CellSize * 0.8f, _doorCell.Y * CellSize);
+            DrawMesh(_propVerts, slabWorld, _textures.Flat, new Color(150, 100, 60));
+        }
+
         // Loot as a small cardboard box per item, scaled up a little when
         // secured so the recovered pile reads at a glance. Anything a critter
         // is carrying is drawn with that critter instead (see DrawCritters) —
@@ -1938,7 +2011,7 @@ namespace StoreChase
             {
                 if (customer.Escaped) continue;
                 var tint = customer.IsShoplifter
-                    ? new Color(200, 150, 120)   // warm brown: the one to watch
+                    ? new Color(220, 70, 60)   // red: the thief, clearly distinct from the player's blue
                     : new Color(170, 180, 200);   // cool grey: a regular shopper
 
                 var facing = Matrix.CreateRotationY(customer.FacingAngle);

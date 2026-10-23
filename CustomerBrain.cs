@@ -12,7 +12,7 @@ namespace StoreChase;
 public static class CustomerBrain
 {
     public static void Decide(Customer c, GridMap map, GridPos playerCell, ItemField items,
-        Random rng, IReadOnlyList<GridPos> exits)
+        Random rng, IReadOnlyList<GridPos> exits, GridPos? door = null)
     {
         if (c.Escaped) return;
         if (c.IsMoving) return;
@@ -40,6 +40,13 @@ public static class CustomerBrain
                 c.SetTarget(item.Cell, map);
                 return;
             }
+        }
+
+        // A shopper may randomly decide to leave through the door.
+        if (!c.IsShoplifter && door.HasValue && rng.NextDouble() < 0.005)
+        {
+            c.SetTarget(door.Value, map);
+            return;
         }
 
         // Browse: occasionally pick a new aisle to wander down.
