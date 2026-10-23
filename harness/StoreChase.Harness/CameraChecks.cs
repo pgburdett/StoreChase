@@ -25,6 +25,7 @@ public static class CameraChecks
 
         const float cellSize = 2f;
         const float aspect = 1600f / 1200f;
+        const float zoom = Camera.DefaultZoom;
 
         foreach (var layout in StoreLayouts.All)
         {
@@ -36,7 +37,7 @@ public static class CameraChecks
             // The viewport must be smaller than the store, or there is nothing
             // to scroll. (The small reference store at maximum zoom-out is
             // allowed to fit — that is the point of zooming out.)
-            float viewWidth = Camera.ViewCellsWide * cellSize;
+            float viewWidth = Camera.ViewCellsWide * cellSize * zoom;
             float viewHeight = viewWidth / aspect;
 
             Check.That($"'{layout.Name}': the viewport is smaller than the store at zoom 1",

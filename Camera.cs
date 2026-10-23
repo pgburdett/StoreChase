@@ -52,7 +52,7 @@ namespace StoreChase
         // tilt blends from straight-down orthographic (0) to an angled
         // perspective view (up to ~80 degrees).
         private Vector2 _panOffset = Vector2.Zero;
-        public float Zoom { get; private set; } = 1f;
+        public float Zoom { get; private set; } = DefaultZoom;
         public float TiltDegrees { get; private set; } = 0f;
 
         // First-person yaw/pitch (radians). Yaw uses the same convention as
@@ -93,12 +93,8 @@ namespace StoreChase
         public const float MaxTiltDegrees = 80f; // near-horizontal, but never quite level
         public const float TiltSpeed = 45f;  // degrees per second
 
-        /// <summary>
-        /// The tilt the game opens in. Straight-down (0) reads as a floor
-        /// plan; 45° reads as a room — you can see the shelves standing up and
-        /// the aisles between them. U/O still tilt from here.
-        /// </summary>
         public const float DefaultTiltDegrees = 45f;
+        public const float DefaultZoom = 0.6f;
 
         // How many cells of the store are visible across the screen at zoom 1.
         //
@@ -211,7 +207,7 @@ namespace StoreChase
         public void Reset()
         {
             _panOffset = Vector2.Zero;
-            Zoom = 1f;
+            Zoom = DefaultZoom;
             TiltDegrees = DefaultTiltDegrees;
             UpdateCameraMatrices();
         }
