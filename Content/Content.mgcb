@@ -23,3 +23,10 @@
 /processor:EffectProcessor
 /processorParam:DebugMode=Auto
 /build:Effects/CatNormalMap.fx
+
+#begin Robotron.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Compressed
+/build:Robotron.spritefont

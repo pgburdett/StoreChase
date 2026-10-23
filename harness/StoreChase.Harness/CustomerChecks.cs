@@ -39,6 +39,38 @@ public static class CustomerChecks
         Check.That("a customer arrives at its target", c.Cell == target && c.JustArrived);
         Check.That("JustArrived clears on the next frame", !JustArrivedAfterUpdate(c, map));
 
+        // A target far across the store must be *walked*, one adjacent cell at
+        // a time. The old body lerped straight from its cell to the
+        // destination in a single stride, so a shopper picked an aisle on the
+        // far side of the store and slid through the shelves in about a third
+        // of a second — which read, correctly, as teleporting.
+        var dist = map.DistanceMapFrom(start);
+        var far = cells
+            .Where(cell => dist[cell.X, cell.Y] > 5)
+            .OrderByDescending(cell => dist[cell.X, cell.Y])
+            .First();
+        var walker = new Customer(start, 2f, shoplifter: false, new Random(20));
+        walker.SetTarget(far, map);
+
+        walker.Update(0.016f, map);
+        Check.That("a distant target is not reached in one frame",
+            walker.Cell != far,
+            $"after one 60fps frame at {walker.Cell}, target {far}");
+        Check.That("a customer steps to an adjacent cell",
+            walker.NextCell.HasValue && Manhattan(walker.Cell, walker.NextCell.Value) == 1,
+            $"next {walker.NextCell}");
+
+        // Whatever the timestep, the body never leaves the grid it can walk.
+        bool everOffPath = false;
+        for (int i = 0; i < 3000 && walker.Cell != far; i++)
+        {
+            walker.Update(1f / 60f, map);
+            if (walker.NextCell.HasValue && Manhattan(walker.Cell, walker.NextCell.Value) != 1)
+                everOffPath = true;
+        }
+        Check.That("a customer walks all the way to a distant target", walker.Cell == far);
+        Check.That("a walked path only ever uses adjacent cells", !everOffPath);
+
         // An invalid (wall) target is ignored.
         var c2 = new Customer(start, 2f, false, new Random(2));
         var wall = new GridPos(0, 0); // Standard row 0 is all wall

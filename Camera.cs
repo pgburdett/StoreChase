@@ -93,6 +93,13 @@ namespace StoreChase
         public const float MaxTiltDegrees = 80f; // near-horizontal, but never quite level
         public const float TiltSpeed = 45f;  // degrees per second
 
+        /// <summary>
+        /// The tilt the game opens in. Straight-down (0) reads as a floor
+        /// plan; 45° reads as a room — you can see the shelves standing up and
+        /// the aisles between them. U/O still tilt from here.
+        /// </summary>
+        public const float DefaultTiltDegrees = 45f;
+
         // How many cells of the store are visible across the screen at zoom 1.
         //
         // This is what makes the store scroll: the viewport is a fixed window
@@ -152,12 +159,17 @@ namespace StoreChase
             _mapOriginX = _mapOriginY = -cellSize * 0.5f;
             _aspectRatio = graphicsDevice.Viewport.AspectRatio;
 
+            // Open in the angled 3/4 view rather than straight down. From
+            // here U/O tilt, and the view reads as a room instead of a floor
+            // plan.
+            TiltDegrees = DefaultTiltDegrees;
+
             // Dev-only starting view, for screenshotting the game on a
             // machine where synthetic key events never reach the window
             // (KWin's input-injection prompt blocks xdotool, so U/O/V can't
-            // be driven remotely): SC_TILT=45 starts tilted 45°, SC_FP=1
-            // starts in first person. Unset — the normal case — this is two
-            // environment lookups and changes nothing.
+            // be driven remotely): SC_TILT=45 overrides the opening tilt,
+            // SC_FP=1 starts in first person. Unset — the normal case — this
+            // is two environment lookups and changes nothing.
             if (float.TryParse(Environment.GetEnvironmentVariable("SC_TILT"), out float forcedTilt))
                 TiltDegrees = MathHelper.Clamp(forcedTilt, 0f, MaxTiltDegrees);
             if (Environment.GetEnvironmentVariable("SC_FP") == "1")
@@ -188,6 +200,10 @@ namespace StoreChase
             _mapOriginX = _mapOriginY = -cellSize * 0.5f;
             _aspectRatio = aspectRatio;
 
+            // Left flat on purpose: the framing checks are defined against the
+            // orthographic reference view, where the visible width is exactly
+            // ViewCellsWide cells. The angled default is set by the
+            // GraphicsDevice constructor, which is what the game uses.
             UpdateCameraMatrices();
         }
 
@@ -196,7 +212,7 @@ namespace StoreChase
         {
             _panOffset = Vector2.Zero;
             Zoom = 1f;
-            TiltDegrees = 0f;
+            TiltDegrees = DefaultTiltDegrees;
             UpdateCameraMatrices();
         }
 

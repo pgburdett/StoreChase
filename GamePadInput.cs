@@ -15,7 +15,7 @@ namespace StoreChase;
 //   Y                    -> toggle first-person / isometric
 //   X                    -> throw the ball
 //   B                    -> use the pocketed power-up
-//   Start                -> restart
+//   Start                -> start the game / restart
 //   Back                 -> exit
 public class GamePadInput : IInputSource
 {
@@ -26,6 +26,7 @@ public class GamePadInput : IInputSource
     private bool _previousToggle;
     private bool _previousThrow;
     private bool _previousUse;
+    private bool _previousStart;
 
     /// <summary>Creates a gamepad input source for the given controller slot.</summary>
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
@@ -77,6 +78,14 @@ public class GamePadInput : IInputSource
         bool usePressed = useNow && !_previousUse;
         _previousUse = useNow;
 
+        // Start is the pad's confirm *and* its restart: rising edge, so one
+        // press is one action, and both fields are set because the two phases
+        // read different ones (Title reads Start/Restart, the between-rounds
+        // shop reads Restart). Without this the pad could not leave the title.
+        bool startNow = gp.Buttons.Start == ButtonState.Pressed;
+        bool startPressed = startNow && !_previousStart;
+        _previousStart = startNow;
+
         return new InputState
         {
             Move = move,
@@ -87,7 +96,8 @@ public class GamePadInput : IInputSource
             Zoom = zoom * dt * 2f,
             Look = look,
             ToggleCamera = toggle,
-            Restart = gp.Buttons.Start == ButtonState.Pressed,
+            Start = startPressed,
+            Restart = startPressed,
             Exit = gp.Buttons.Back == ButtonState.Pressed,
             Throw = throwPressed,
             Use = usePressed,

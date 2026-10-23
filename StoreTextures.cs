@@ -91,60 +91,55 @@ public static class StoreTextures
     // is why the patterns are built from periodic distances rather than from
     // one-sided ramps (see WrapDistance).
 
-    // Store floor: terrazzo. A pale stone slab with colored chips scattered
-    // through it and a grout ring around each tile edge — one tile per
-    // texture period, and the floor is drawn one period per grid cell, so the
-    // grout lands exactly on cell boundaries (the floor quad is drawn offset
-    // half a cell for this; see Game1.Draw).
+    // Store floor: dark wood planks. Warm brown boards with a grain streak,
+    // a seam between planks and a stagger so the joins don't line up across
+    // the store. One texture period per grid cell, so the plank seam lands
+    // exactly on cell boundaries (the floor quad is drawn offset half a cell
+    // for this; see Game1.Draw).
+    //
+    // This replaced a pale terrazzo slab. Under the store's ambient the old
+    // floor was the brightest surface in frame and the shelves read as
+    // washed-out pastel against it; dark wood lets the product colours carry
+    // the eye.
     private static Color MakeFloor(float x, float y, int w, int h)
     {
-        const float groutFraction = 0.05f;
-        float dEdge = MathF.Min(WrapDistance(x), WrapDistance(y));
+        const float seamFraction = 0.035f;
 
-        // Slab + fine noise.
-        Color tile = Speckle(new Color(206, 203, 196), x, y, w, h, 9091u, 0.035f);
+        // Three planks per tile: the board index and the position along it.
+        const int planks = 3;
+        float py = y * planks;
+        int index = (int)MathF.Floor(py);
+        float within = py - index;
 
-        // Chips: a hashed dot per cell of a 24x24 lattice. The neighbourhood
-        // scan and the wrapped lattice indices are what let a dot straddle
-        // the tile seam without the pattern tearing (StoreChecks compares
-        // texels either side of x=0 against each other).
-        const int grid = 24;
-        float cx = x * grid, cy = y * grid;
-        int ix = (int)MathF.Floor(cx), iy = (int)MathF.Floor(cy);
+        // Stagger: offset each plank's butt-joint by half a plank so the
+        // short ends do not form a continuous line down the store.
+        float shifted = x + index * 0.5f;
+        float sx = shifted - MathF.Floor(shifted);
 
-        Color[] palette =
-        {
-            new(72, 72, 78),      // charcoal
-            new(172, 84, 70),     // brick red
-            new(226, 208, 168),   // cream
-            new(98, 118, 146),    // slate blue
-            new(130, 150, 116),   // sage
-        };
+        // Per-plank tone so no two boards are the same brown.
+        uint n = Hash((uint)(index & 7), 0u, 0xB0ABu);
+        float v = ((n & 0xFF) / 255f - 0.5f) * 0.12f;
 
-        for (int dy = -1; dy <= 1; dy++)
-        {
-            for (int dx = -1; dx <= 1; dx++)
-            {
-                int hx = ix + dx, hy = iy + dy;
-                int wx = ((hx % grid) + grid) % grid;
-                int wy = ((hy % grid) + grid) % grid;
-                uint n = Hash((uint)wx, (uint)wy, 4711u);
-                if (n % 10u < 3u) continue; // some cells stay empty
+        // Base wood, a mid-dark walnut. Green carries a little more than the
+        // other channels so the boards stay warm rather than grey.
+        Color wood = new(
+            (byte)MathHelper.Clamp(96 + v * 255f, 0f, 255f),
+            (byte)MathHelper.Clamp(66 + v * 220f, 0f, 255f),
+            (byte)MathHelper.Clamp(42 + v * 180f, 0f, 255f));
 
-                // Dot centre inside its lattice cell, and its radius.
-                float px = hx + 0.3f + ((n >> 8) & 0xFF) / 255f * 0.4f;
-                float py = hy + 0.3f + ((n >> 16) & 0xFF) / 255f * 0.4f;
-                float r = 0.10f + ((n >> 24) & 0x3F) / 63f * 0.14f;
+        // Grain: fine streaks running the length of the plank, plus a broader
+        // slow wobble so the boards are not uniformly striped.
+        float grain = Hash01((uint)(int)(x * w), (uint)(int)(py * 40f), 0x9A17u);
+        float wobble = 0.5f + 0.5f * MathF.Sin((x * 6f + index) * MathF.PI * 2f);
+        wood = Color.Lerp(wood, Color.Lerp(wood, new Color(58, 38, 24), 0.55f),
+            0.10f + 0.22f * grain * (0.4f + 0.6f * wobble));
 
-                float ddx = cx - px, ddy = cy - py;
-                if (ddx * ddx + ddy * ddy <= r * r)
-                    tile = palette[(n >> 4) % (uint)palette.Length];
-            }
-        }
+        // Dark seam at each plank edge (the long edges and the staggered butts).
+        float dseam = MathF.Min(WrapDistance(py), MathF.Min(WrapDistance(shifted), 0.5f));
+        float edge = MathHelper.Clamp(dseam / seamFraction - 0.5f, 0f, 1f);
+        wood = Color.Lerp(new Color(38, 24, 15), wood, edge * edge * (3f - 2f * edge));
 
-        // Grout ring around every tile edge, softened so mips don't shimmer.
-        float edge = MathHelper.Clamp(dEdge / groutFraction - 0.5f, 0f, 1f);
-        return Color.Lerp(new Color(124, 121, 114), tile, edge * edge * (3f - 2f * edge));
+        return Speckle(wood, x, y, w, h, 9091u, 0.02f);
     }
 
     // The shelf unit's atlas. Brushed steel (vertical striations, a panel
@@ -157,37 +152,44 @@ public static class StoreTextures
         if (y >= WhiteBandStart)
             return Color.White; // exact: tint faces sample here.
 
-        // Two scales of column hash = brushed vertical grain.
+        // Two scales of column hash = brushed vertical grain. Toned down from
+        // near-white steel so the shelf carcass reads as a mid grey against
+        // the dark floor rather than as a bright frame.
         uint col = (uint)(int)(x * w);
         float fine = Hash01(col, 3u, 0x5EE1u);
         float wide = Hash01(col / 3u, 7u, 0x5EE1u);
         Color steel = Color.Lerp(
-            new Color(150, 153, 161), new Color(194, 197, 205), 0.55f * fine + 0.45f * wide);
+            new Color(104, 106, 114), new Color(140, 143, 152), 0.55f * fine + 0.45f * wide);
 
         // A panel seam halfway through the period so uprights read as panels.
         float seam = WrapDistance(y * 2f);
         if (seam < 0.015f)
-            steel = Color.Lerp(new Color(114, 117, 124), steel, seam / 0.015f);
+            steel = Color.Lerp(new Color(74, 76, 84), steel, seam / 0.015f);
 
         return Speckle(steel, x, y, w, h, 31337u, 0.03f);
     }
 
-    // The store's border ring: painted plaster with block courses and a
+    // The store's border ring: a cool painted block wall with courses and a
     // darker baseboard along the bottom, so the edge of the map reads as
     // building rather than as more shelving.
+    //
+    // Deliberately *cool* — blue-grey with no warm cast. The old warm beige
+    // plaster picked up the alarm's red ambient and rendered as a flesh tone,
+    // which read as skin rather than as a wall. A cool wall stays a wall at
+    // every alarm level, and it separates the room from the warm wood floor.
     private static Color MakeWall(float x, float y, int w, int h)
     {
-        Color plaster = Speckle(new Color(198, 190, 177), x, y, w, h, 5555u, 0.04f);
+        Color plaster = Speckle(new Color(92, 100, 116), x, y, w, h, 5555u, 0.04f);
 
         // Faint courses every quarter tile.
         float course = WrapDistance(y * 4f);
         if (course < 0.025f)
-            plaster = Color.Lerp(new Color(178, 171, 159), plaster, course / 0.025f);
+            plaster = Color.Lerp(new Color(74, 82, 98), plaster, course / 0.025f);
 
         // Baseboard: the bottom eighth, darker, with a soft top edge.
         if (y < 0.14f)
         {
-            Color board = Speckle(new Color(120, 112, 100), x, y, w, h, 8080u, 0.05f);
+            Color board = Speckle(new Color(52, 58, 72), x, y, w, h, 8080u, 0.05f);
             float t = MathHelper.Clamp((y - 0.11f) / 0.03f, 0f, 1f);
             return Color.Lerp(board, plaster, t * t * (3f - 2f * t));
         }
@@ -219,8 +221,8 @@ public static class StoreTextures
     // stripe, so the goal reads as a distinct part of the room.
     private static Color MakeCounter(float x, float y, int w, int h)
     {
-        Color baseColor = new(64, 68, 82);
-        Color stripe = new(206, 176, 64);
+        Color baseColor = new(46, 50, 62);
+        Color stripe = ArcadePalette.Dim(ArcadePalette.Yellow, 0.18f);
 
         // Diagonal hazard stripes, periodic so the tile still wraps.
         float diag = WrapDistance((x + y) - 0.5f);

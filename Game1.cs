@@ -303,6 +303,13 @@ namespace StoreChase
 
             StartRound(false);
 
+            // Like SC_TILT / SC_FP: skip the attract screen and start the
+            // round immediately. Synthetic key input is blocked in some
+            // environments, so there is otherwise no way to screenshot the
+            // store without a human pressing Enter.
+            if (Environment.GetEnvironmentVariable("SC_PLAY") != null)
+                _phase = RunPhase.Playing;
+
             base.Initialize();
         }
 
@@ -678,6 +685,10 @@ namespace StoreChase
             // belongs to the HUD, so it's loaded here and handed over.
             _hud.Font = Content.Load<SpriteFont>("DefaultFont");
 
+            // The attract-screen wordmark face. Blocky and arcade-shaped, which
+            // the UI font is not; used only by Hud.DrawPaletteWordmark.
+            _hud.TitleFont = Content.Load<SpriteFont>("Robotron");
+
             // Initialize runs before LoadContent, so the first round's cast was
             // created before the cat geometry existed. Give them their meshes
             // now; StartRound does the same for every later round.
@@ -821,7 +832,12 @@ namespace StoreChase
 
             if (input.Exit) Exit();
 
-            _camera.Update(gameTime, input, _player.WorldPos, _player.FacingAngle);
+            // The camera is only live during play. On the attract screen it
+            // was still being driven, so a stray wheel notch, tilt trigger or
+            // V/Y press invisibly re-framed the store before the round began —
+            // the player's first look at the store was a camera nobody set.
+            if (_phase != RunPhase.Title)
+                _camera.Update(gameTime, input, _player.WorldPos, _player.FacingAngle);
 
             // The juice layer ages in real time regardless of phase, so a
             // burst never freezes mid-air behind the end banner.
@@ -838,7 +854,12 @@ namespace StoreChase
             }
             else if (_phase == RunPhase.Title)
             {
-                if (input.Start) StartRound();
+                // Either confirm button, because the gamepad's Start maps to
+                // Restart and the keyboard's Enter maps to Start. Accepting
+                // both is what lets a controller player actually get past the
+                // attract screen — before this, Start-only meant a pad could
+                // never begin a run.
+                if (input.Start || input.Restart) StartRound();
             }
             else
             {
@@ -1788,7 +1809,10 @@ namespace StoreChase
 
         protected override void Draw(GameTime gameTime)
         {
-            GraphicsDevice.Clear(new Color(20, 20, 25));
+            // The void behind the store is the palette's black, not a lifted
+            // grey. A dark-but-not-black clear reads as haze and washes out
+            // every surface in front of it.
+            GraphicsDevice.Clear(ArcadePalette.Black);
             GraphicsDevice.DepthStencilState = DepthStencilState.Default; // enable depth testing for 3D
 
             if (_phase != RunPhase.Title)
@@ -1807,7 +1831,14 @@ namespace StoreChase
                 float day = 0.85f + 0.15f * MathF.Sin(_dayPhase * MathF.Tau);
                 if (_rainActive > 0f) day *= 0.9f;
                 _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light * day;
-                _effect.SpecularColor = new Vector3(0.2f, 0.2f, 0.2f);    // Adds a tiny bit of shine
+                // No specular on the store. BasicEffect's three directional
+                // lights all carry a white specular term, and the material
+                // SpecularColor multiplies it: at 0.2 the three summed gave a
+                // flat ~0.36 white added to *every* surface, which lifted the
+                // blacks and turned the saturated product colours into
+                // pastels. That is what "washed out" was. A flat arcade
+                // palette cannot survive a white highlight layer.
+                _effect.SpecularColor = Vector3.Zero;
                 DrawMesh(_floorVerts, FloorWorld, _textures.Floor);
 
                 // Blocked cells: the border ring as plain wall, every interior
@@ -2265,8 +2296,14 @@ namespace StoreChase
         /// </summary>
         private static Vector3 AmbientForAlarm(float level)
         {
-            var calm = new Vector3(0.5f, 0.5f, 0.55f);
-            var alarmed = new Vector3(0.62f, 0.26f, 0.24f);
+            // Calm is neutral-cool, so wall and metal keep their own colour.
+            var calm = new Vector3(0.52f, 0.53f, 0.58f);
+            // Alarmed stays a *red shift*, not a red light. At the old
+            // (0.62, 0.26, 0.24) every surface was lit almost entirely in red,
+            // which turned the walls a flesh tone and drained the product
+            // colours. Keeping the green/blue channels up leaves a room that
+            // is clearly alarmed but still shows what is in it.
+            var alarmed = new Vector3(0.58f, 0.33f, 0.30f);
             return Vector3.Lerp(calm, alarmed, MathHelper.Clamp(level, 0f, 1f));
         }
 
@@ -2292,6 +2329,7 @@ namespace StoreChase
             PlayerCell: _player.Cell,
             Layout: _map.Layout,
             TitlePhase: _title.Phase,
+            TitleTime: _title.Time,
             Pocketed: _pocket.Pocketed,
             // Normalised: 0 = silent, 1 = as loud as the store gets (a skid
             // while skating). Only the HUD reads this scale.

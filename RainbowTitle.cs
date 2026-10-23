@@ -9,9 +9,19 @@ namespace StoreChase;
 // background thread (as requested); the game thread only *reads* the current
 // phase and does the drawing, since the GraphicsDevice/SpriteBatch are not
 // thread-safe. Dispose() stops the worker.
+//
+// It exposes two different things, and they are not interchangeable:
+//   Phase — a wrapped 0..1 colour position. It is a sawtooth: it returns to
+//           zero once a cycle. Fine for "which colour" or "where in the blink",
+//           utterly wrong as a clock, because anything driven by it snaps back
+//           when it wraps.
+//   Time  — seconds since start, monotonically increasing. This is what any
+//           *motion* should be driven by (the starfield, drift, scrolling).
+// Using Phase for motion is the bug that made the stars crawl a pixel and then
+// jump: at 0.25 cycles/sec the position reset every four seconds.
 public sealed class RainbowTitle : IDisposable
 {
-    /// <summary>The title text drawn at the top of the screen.</summary>
+    /// <summary>The title text.</summary>
     public const string Text = "Store Chase";
 
     private const float SpeedHz = 0.25f; // full rainbow cycles per second
@@ -20,7 +30,8 @@ public sealed class RainbowTitle : IDisposable
     private readonly Thread _worker;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private volatile bool _running = true;
-    private float _phase; // 0..1; written by the worker, read by the game thread
+    private float _phase;   // 0..1; written by the worker, read by the game thread
+    private float _time;    // seconds since start; monotonic, never wraps
     private double _lastSeconds;
 
     /// <summary>Starts the background thread that advances the hue phase.</summary>
@@ -34,8 +45,12 @@ public sealed class RainbowTitle : IDisposable
         _worker.Start();
     }
 
-    /// <summary>Current hue offset (0..1). Volatile read so the game thread sees updates.</summary>
+    /// <summary>Current hue offset (0..1). A wrapped sawtooth — see the class note.</summary>
     public float Phase => Volatile.Read(ref _phase);
+
+    /// <summary>Seconds since the title started, monotonically increasing. Drive
+    /// motion from this, never from <see cref="Phase"/>.</summary>
+    public float Time => Volatile.Read(ref _time);
 
     private void Run()
     {
@@ -48,6 +63,7 @@ public sealed class RainbowTitle : IDisposable
             float phase = Volatile.Read(ref _phase) + dt * SpeedHz;
             phase -= MathF.Floor(phase);
             Volatile.Write(ref _phase, phase);
+            Volatile.Write(ref _time, Volatile.Read(ref _time) + dt);
 
             Thread.Sleep(FrameMs);
         }

@@ -60,24 +60,38 @@ public static class ShelfMesh
     /// The aisle/zone colours. Game1 indexes these by shelf-row band, so a
     /// whole gondola run reads as one supermarket zone — on the spine strip
     /// from above, and on the end signs from the cross-aisle.
+    ///
+    /// These are the arcade palette's hues taken down in value (see
+    /// ArcadePalette.Dim), not pastel tints. The earlier set was mixed
+    /// independently and drifted pale and low-saturation, so against the
+    /// brighter floor the aisles read as washed-out plastic; pulling them
+    /// onto the palette keeps them saturated and lets the floor stay dark.
     /// </summary>
     public static readonly Color[] AislePalette =
     {
-        new(206, 78, 66),    // red
-        new(66, 128, 190),   // blue
-        new(86, 160, 92),    // green
-        new(224, 172, 60),   // yellow
-        new(160, 100, 180),  // purple
-        new(224, 124, 58),   // orange
+        ArcadePalette.Dim(ArcadePalette.Red, 0.20f),      // red
+        ArcadePalette.Dim(ArcadePalette.Blue, 0.10f),     // blue
+        ArcadePalette.Dim(ArcadePalette.Green, 0.30f),    // green
+        ArcadePalette.Dim(ArcadePalette.Yellow, 0.28f),   // yellow
+        ArcadePalette.Dim(ArcadePalette.Magenta, 0.28f),  // magenta (was purple)
+        ArcadePalette.Dim(ArcadePalette.Orange, 0.15f),   // orange
     };
 
-    // Packaging colours for the products. Deliberately a bit chalky: under
-    // BasicEffect's lighting a saturated primary reads as plastic.
+    // Packaging colours for the products: mostly the aisle hues mixed toward
+    // the shelf's steel so the goods read as goods, with a couple of neutral
+    // cartons (cream, kraft) so the shelves are not a solid rainbow.
     private static readonly Color[] ProductPalette =
     {
-        new(198, 84, 70), new(72, 116, 178), new(94, 150, 88), new(214, 166, 64),
-        new(150, 104, 164), new(206, 124, 58), new(222, 210, 180), new(118, 118, 124),
-        new(240, 236, 226), new(96, 180, 190),
+        ArcadePalette.Dim(ArcadePalette.Red, 0.15f),
+        ArcadePalette.Dim(ArcadePalette.Blue, 0.05f),
+        ArcadePalette.Dim(ArcadePalette.Green, 0.25f),
+        ArcadePalette.Dim(ArcadePalette.Yellow, 0.22f),
+        ArcadePalette.Dim(ArcadePalette.Magenta, 0.20f),
+        ArcadePalette.Dim(ArcadePalette.Orange, 0.10f),
+        new(198, 178, 138),   // cream carton
+        new(120, 112, 104),   // grey carton
+        new(232, 226, 210),   // white carton
+        ArcadePalette.Dim(ArcadePalette.Cyan, 0.30f),
     };
 
     /// <summary>Builds one shelf unit in unit space.</summary>
@@ -92,8 +106,10 @@ public static class ShelfMesh
             style.Aisle * 131 + (int)style.End * 17 + (int)style.Open * 7 + style.Variant);
 
         // Plinth: the solid base. Bottom face skipped — it lies on the floor.
+        // Dark steel, so the shelf carcass sits *on* the dark floor instead of
+        // glowing above it.
         Box(b, new Vector3(-0.46f, 0f, -0.46f), new Vector3(0.46f, 0.20f, 0.46f),
-            new Color(204, 205, 212), band: false, Faces.All & ~Faces.NegY);
+            new Color(126, 129, 138), band: false, Faces.All & ~Faces.NegY);
 
         // The two end uprights, full height.
         Box(b, new Vector3(-0.50f, 0f, -0.46f), new Vector3(-0.45f, 1f, 0.46f),
@@ -114,7 +130,7 @@ public static class ShelfMesh
             Box(b, min, max, Color.White, band: false,
                 Faces.PosX | Faces.NegX | Faces.PosY | Faces.NegY);
 
-            var lip = new Color(236, 236, 240);
+            var lip = new Color(196, 198, 206);
             b.Quad(new Vector3(0f, 0f, -1f),
                 new Vector3(min.X, min.Y, min.Z), Builder.BandUv(0f, 0f),
                 new Vector3(max.X, min.Y, min.Z), Builder.BandUv(1f, 0f),

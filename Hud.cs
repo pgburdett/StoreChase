@@ -30,6 +30,10 @@ public readonly record struct HudState(
     StoreLayout Layout,
     float TitlePhase,
 
+    /// <summary>Seconds since startup, monotonic. Motion on the title screen is
+    /// driven by this; <see cref="TitlePhase"/> wraps and would snap back.</summary>
+    float TitleTime,
+
     /// <summary>What's in the power-up pocket, for the "[E] use …" line.</summary>
     PowerUpKind? Pocketed,
 
@@ -158,10 +162,14 @@ public sealed class Hud
     }
 
     /// <summary>
-    /// The font is loaded from the content pipeline after the HUD is
-    /// constructed (LoadContent runs after Initialize), so it arrives
-    /// separately rather than through the constructor.
+    /// The attract-screen wordmark face. A separate, blocky font loaded from
+    /// the content pipeline (Robotron.spritefont); the UI font stays DejaVu so
+    /// gameplay text remains legible. Null until LoadContent, so every use has
+    /// a fallback.
     /// </summary>
+    public SpriteFont? TitleFont { get; set; }
+
+    /// <summary>The UI font, arriving after construction (see <see cref="Font"/>).</summary>
     public SpriteFont? Font
     {
         get => _font;
@@ -217,6 +225,21 @@ public sealed class Hud
         _graphicsDevice.DepthStencilState = DepthStencilState.Default;
     }
 
+    /// <summary>
+    /// Draws the attract screen: the arcade title.
+    ///
+    /// Layout is proportional rather than fixed-pixel, because the window is
+    /// resizable and a fixed 1200-tall layout silently overlaps itself at any
+    /// other height. Everything is expressed as a fraction of the viewport and
+    /// clamped, so the same code frames correctly at 800x600 and at 4K.
+    ///
+    /// Two rules learned the hard way and worth keeping:
+    ///  - The wordmark is drawn *below* the marquee band. They used to share
+    ///    the same 28 pixels and the title lost.
+    ///  - Translucent shapes are drawn with premultiplied colours. The batch
+    ///    blends One/InverseSourceAlpha, so a <c>new Color(r,g,b,a)</c> with a
+    ///    low alpha renders at full brightness — a "glow" becomes a slab.
+    /// </summary>
     public void DrawTitleScreen(in HudState state)
     {
         if (_font == null) return;
@@ -224,124 +247,292 @@ public sealed class Hud
         int w = vp.Width, h = vp.Height;
         int cx = w / 2;
         float t = state.TitlePhase;
-        var font = _font;
+        float time = state.TitleTime;
+
+        // One scale factor for the whole screen, so a smaller window shrinks
+        // the layout instead of truncating it.
+        float s = MathF.Min(w / 1600f, h / 1200f);
+        s = MathHelper.Clamp(s, 0.5f, 2f);
+
+        int barHeight = (int)(34 * s);
 
         _spriteBatch.Begin();
 
-        // --- Arcade cabinet backdrop -------------------------------------
-        // Deep indigo-black base so the neons pop.
-        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, h), new Color(6, 4, 14));
+        // --- The void ----------------------------------------------------
+        // Pure black, as the arcade had it. Everything else is a palette
+        // colour on top; there is no "dark grey" in this palette.
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, h), ArcadePalette.Black);
 
-        // Animated starfield: deterministic twinkle, cheap.
-        for (int i = 0; i < 90; i++)
+        // The starfield is confined to the left and right margins, so it can
+        // never draw through the wordmark, the prompt or the controls panel.
+        // A field that runs under the text reads as dirt on the screen.
+        DrawStarfield(state, s, barHeight, w, h);
+
+        // --- Marquee band ------------------------------------------------
+        // The ticker keeps its own strip so it can never collide with the
+        // wordmark below it.
+        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, barHeight), ArcadePalette.Magenta);
+        DrawMarquee(state, s, barHeight);
+
+        // The layout below is a *stack*: each block is placed under the
+        // measured height of the one above it, so nothing overlaps at any
+        // window size. The old code used two absolute anchors (h*0.60 and
+        // h*0.72) which left a dead band in the middle of a tall window.
+        float y = barHeight;
+
+        // --- The wordmark ------------------------------------------------
+        // STORE CHASE 3D in the arcade face: one solid colour per letter,
+        // marching through the palette left to right. It is the arcade
+        // colour-cycle, not a rainbow: only palette entries are used, and
+        // the whole sequence steps rather than sweeping.
+        float titleScale = 2.6f * s;
+        y += 44 * s;
+        float titleWidth = DrawPaletteWordmark("STORE CHASE 3D", time, cx, y, titleScale);
+        y += TitleFont!.LineSpacing * titleScale;
+
+        // Underline: a single bright rule the width of the wordmark, which is
+        // what stops a black letter from looking like a rendering bug.
+        y += 12 * s;
+        int ruleY = (int)y;
+        int half = (int)(titleWidth / 2);
+        _spriteBatch.Draw(_uiPixel,
+            new Rectangle(cx - half, ruleY, half * 2, Math.Max(2, (int)(3 * s))),
+            ArcadePalette.Yellow);
+        y += Math.Max(2, 3 * s);
+
+        // --- Subtitle -----------------------------------------------------
+        const string subtitle = "A HEIST IN EVERY AISLE";
+        float subScale = 1.6f * s;
+        y += 26 * s;
+        var subSize = _font.MeasureString(subtitle) * subScale;
+        DrawScaledText(subtitle, cx - subSize.X / 2, y, subScale, ArcadePalette.Cyan);
+        y += subSize.Y;
+
+        // --- Prompt -------------------------------------------------------
+        // Blinks between yellow and white. Drawn with a dark drop shadow
+        // rather than a coloured glow: a glow needs real alpha, and this
+        // batch has none to give.
+        const string prompt = "PRESS ENTER TO START";
+        float promptScale = 1.5f * s;
+        var promptSize = _font.MeasureString(prompt) * promptScale;
+
+        // --- Controls -----------------------------------------------------
+        // Anchored to the bottom (above the footer), growing upward, so the
+        // gap is always between the prompt and the panel rather than after
+        // the panel. A panel placed at a fraction of the height floats in
+        // the middle of a tall window and touches the footer in a short one.
+        string[] hints =
         {
-            uint n = (uint)(i * 7919 + 12345);
-            int sx = (int)(n % (uint)w);
-            int sy = (int)((n / (uint)w) % (uint)h);
-            float tw = 0.5f + 0.5f * MathF.Sin(t * 3f + i * 0.7f);
-            int a = (int)(60 + 195 * tw);
-            int sz = (i % 3 == 0) ? 2 : 1;
-            _spriteBatch.Draw(_uiPixel, new Rectangle(sx, sy, sz, sz),
-                new Color(180, 200, 255, a));
-        }
-
-        // Horizontal scanlines for that CRT feel.
-        for (int y = 0; y < h; y += 3)
-        {
-            _spriteBatch.Draw(_uiPixel, new Rectangle(0, y, w, 1),
-                new Color(0, 0, 0, 70));
-        }
-
-        // Neon side rails.
-        for (int i = 0; i < 6; i++)
-        {
-            int rx = 24 + i * 6;
-            int pulse = (int)(120 + 135 * (0.5f + 0.5f * MathF.Sin(t * 4f + i)));
-            _spriteBatch.Draw(_uiPixel, new Rectangle(rx, 40, 4, h - 80),
-                new Color(255, 60, 180, pulse));
-            _spriteBatch.Draw(_uiPixel, new Rectangle(w - rx - 4, 40, 4, h - 80),
-                new Color(60, 200, 255, pulse));
-        }
-
-        // Top/bottom marquee bars.
-        _spriteBatch.Draw(_uiPixel, new Rectangle(0, 0, w, 28), new Color(255, 60, 180));
-        _spriteBatch.Draw(_uiPixel, new Rectangle(0, h - 28, w, 28), new Color(60, 200, 255));
-        string marquee = "  *  STORE CHASE 3D  *  HEIST IN EVERY AISLE  *  INSERT COIN  *  ";
-        // scrolling marquee text (approx via offset)
-        int mo = (int)(t * 120f) % (font.MeasureString(marquee).X > 0 ? (int)font.MeasureString(marquee).X : 1);
-        // draw twice for seamless loop
-        for (int k = -1; k <= 1; k++)
-        {
-            _spriteBatch.DrawString(font, marquee,
-                new Vector2(-mo + k * (int)font.MeasureString(marquee).X + 8, 4),
-                new Color(20, 10, 30));
-        }
-
-        // --- Title glow backdrop -----------------------------------------
-        // A soft neon slab behind the rainbow title.
-        int titleY = 40;
-        for (int i = 6; i >= 1; i--)
-        {
-            int pad = i * 10;
-            int a = (int)(18 + i * 6);
-            _spriteBatch.Draw(_uiPixel,
-                new Rectangle(cx - 320 - pad, titleY - pad, 640 + pad * 2, 90 + pad * 2),
-                new Color(255, 80, 200, a));
-        }
-
-        // Big rainbow title at the top.
-        DrawRainbowTitle(state);
-
-        // Subtitle with neon cyan.
-        string subtitle = "A HEIST IN EVERY AISLE";
-        var subSize = font.MeasureString(subtitle);
-        _spriteBatch.DrawString(font, subtitle, new Vector2(cx - subSize.X / 2, 100),
-            new Color(120, 240, 255));
-
-        // --- Press to start (arcade prompt) ------------------------------
-        string prompt = "PRESS  ENTER  TO  START";
-        var promptSize = font.MeasureString(prompt);
-        float blink = (MathF.Sin(state.TitlePhase * 6f) + 1f) / 2f;
-        var promptColor = Color.Lerp(new Color(255, 60, 180), new Color(255, 240, 120), blink);
-        // glow
-        for (int i = 3; i >= 1; i--)
-            _spriteBatch.DrawString(font, prompt,
-                new Vector2(cx - promptSize.X / 2 + i, vp.Height / 2 - 10 + i),
-                new Color(255, 60, 180, 40));
-        _spriteBatch.DrawString(font, prompt, new Vector2(cx - promptSize.X / 2, vp.Height / 2 - 10),
-            promptColor);
-
-        // Controls hint panel.
-        string[] hints = new[]
-        {
-            "WASD  MOVE     MOUSE  LOOK (V FIRST-PERSON)     E  USE     CLICK  THROW",
-            "1-9  SHOP BETWEEN ROUNDS     R  RESTART     ESC  QUIT",
+            "WASD  MOVE      MOUSE  LOOK (V FIRST-PERSON)",
+            "E  USE     CLICK  THROW     R  RESTART     ESC  QUIT",
+            "1-9  SHOP BETWEEN ROUNDS",
         };
-        int hy = vp.Height / 2 + 50;
-        // panel bg
-        _spriteBatch.Draw(_uiPixel, new Rectangle(cx - 420, hy - 8, 840, 60), new Color(20, 12, 40, 180));
-        foreach (var hh in hints)
-        {
-            var hs = font.MeasureString(hh);
-            _spriteBatch.DrawString(font, hh, new Vector2(cx - hs.X / 2, hy), new Color(180, 190, 220));
-            hy += 24;
-        }
+        float footerScale = 1.0f * s;
+        var footerSize = _font.MeasureString(FooterText) * footerScale;
+        float panelBottom = h - barHeight - footerSize.Y - 34 * s;
 
-        // Coins / high score.
-        string hs2 = $"COINS THIS RUN: {state.Coins}";
-        var hss = font.MeasureString(hs2);
-        _spriteBatch.DrawString(font, hs2, new Vector2(cx - hss.X / 2, vp.Height - 52),
-            new Color(255, 220, 100));
+        // The prompt is centred in the slack between the subtitle and the
+        // panel, and the panel is placed *after* it so the two never collide
+        // in a short window. Centring the block is what stops a tall window
+        // from showing one enormous gap under the prompt.
+        float stackBottom = y + promptSize.Y;      // bottom of the subtitle block
+        float promptTop = stackBottom + (panelBottom - stackBottom - promptSize.Y) * 0.42f;
 
-        // Bottom credit line.
-        string credit = "(c) 2026 STORE CHASE ARCADE";
-        var cs = font.MeasureString(credit);
-        _spriteBatch.DrawString(font, credit, new Vector2(cx - cs.X / 2, vp.Height - 22),
-            new Color(20, 10, 30));
+        float blink = (MathF.Sin(t * 5f) + 1f) * 0.5f;
+        var promptColour = Color.Lerp(ArcadePalette.Yellow, ArcadePalette.White, blink);
+        DrawScaledText(prompt, cx - promptSize.X / 2 + 2 * s, promptTop + 2 * s, promptScale, ArcadePalette.Black);
+        DrawScaledText(prompt, cx - promptSize.X / 2, promptTop, promptScale, promptColour);
+
+        DrawControlsPanel(hints, cx, panelBottom, s);
+
+        // --- Footer -------------------------------------------------------
+        // Matches the marquee's name for the game. The two used to disagree
+        // (the marquee said "3D", the footer did not).
+        DrawScaledText(FooterText, cx - footerSize.X / 2,
+            h - barHeight - footerSize.Y - 14 * s, footerScale,
+            ArcadePalette.Dim(ArcadePalette.White, 0.45f));
+
+        // --- Bottom rule --------------------------------------------------
+        _spriteBatch.Draw(_uiPixel,
+            new Rectangle(0, h - Math.Max(2, (int)(3 * s)), w, Math.Max(2, (int)(3 * s))),
+            ArcadePalette.Cyan);
 
         _spriteBatch.End();
         _graphicsDevice.DepthStencilState = DepthStencilState.Default;
     }
+
+    /// <summary>The footer line. One constant so the marquee and footer cannot
+    /// drift apart again — they disagreed about the "3D" once already.</summary>
+    private const string FooterText = "(c) 2026 STORE CHASE 3D ARCADE";
+
+    /// <summary>
+    /// The starfield. Positions come from a hash of the index, and the whole
+    /// field scrolls slowly upward; brightness twinkles on top of that.
+    ///
+    /// The first version hashed the index to a position and never moved it, so
+    /// the "stars" were 90 frozen dots that only pulsed, and the integer
+    /// divide that produced the row clumped most of them into a few columns.
+    /// A starfield that does not move does not read as a starfield.
+    /// </summary>
+    private void DrawStarfield(in HudState state, float s, int barHeight, int w, int h)
+    {
+        // Motion uses the monotonic clock; the twinkle uses the wrapped phase.
+        // Mixing the two up is what made the field reset every four seconds.
+        float time = state.TitleTime;
+        float t = state.TitlePhase;
+        int size = Math.Max(1, (int)(2 * s));
+
+        for (int i = 0; i < 110; i++)
+        {
+            uint n = (uint)(i * 2654435761u + 1013904223u);
+
+            // Across the full width. An earlier pass kept the field out of the
+            // centre column so it could not draw through the text, which left
+            // an obviously empty stripe down the middle of the screen — worse
+            // than the occasional star behind a letter.
+            int x = (int)(n % (uint)w);
+
+            // Vertical drift in *pixels per second*, from this star's own
+            // start offset. The band is walked at a real speed and wrapped, so
+            // a star exits the bottom and re-enters the top seamlessly.
+            float speedPx = 12f + (n >> 8 & 15u) * 3.5f;   // 12..64 px/sec
+            float offset = (n >> 4 & 255u) / 255f;
+            int span = Math.Max(1, h - barHeight);
+            float travelled = (offset * span + time * speedPx) % span;
+            int y = barHeight + (int)travelled;
+
+            float tw = 0.5f + 0.5f * MathF.Sin(t * 3f + i * 0.7f);
+            // Fade near the edges of the band so stars do not pop in and out.
+            float edge = MathF.Min(y - barHeight, (barHeight + span) - y) / (span * 0.25f);
+            float a = MathHelper.Clamp(edge, 0f, 1f) * (0.25f + 0.75f * tw);
+
+            // Premultiplied: the batch blends One/InverseSourceAlpha, so the
+            // colour has to carry the alpha or a dim star is a bright dot.
+            byte c = (byte)(255 * a);
+            _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, size, size),
+                new Color(c, c, c, c));
+        }
+    }
+
+    /// <summary>
+    /// The scrolling ticker. Drawn as text on the marquee band with no
+    /// background of its own, repeated enough times to cover any viewport.
+    /// The repeat count is computed from the measured string rather than
+    /// hard-coded at three copies, which left gaps on a wide window.
+    /// </summary>
+    private void DrawMarquee(in HudState state, float s, int barHeight)
+    {
+        const string marquee = "  *  STORE CHASE 3D  *  HEIST IN EVERY AISLE  *  INSERT COIN  *  ";
+        var size = _font!.MeasureString(marquee).X;
+        if (size <= 1f) return;
+
+        int w = _graphicsDevice.Viewport.Width;
+        int copies = (int)(w / size) + 2;
+        // Scroll speed is in pixels per second off the monotonic clock.
+        // Driving it from TitlePhase made the text lurch: that value wraps
+        // four times a second at 0.25Hz, so the offset was a fast sawtooth.
+        float offset = (state.TitleTime * 140f * s) % size;
+
+        var colour = ArcadePalette.Black;
+        for (int k = 0; k < copies; k++)
+        {
+            float x = k * size - offset;
+            _spriteBatch.DrawString(_font, marquee, new Vector2(x, barHeight * 0.18f), colour);
+        }
+    }
+
+    /// <summary>
+    /// Draws the wordmark one glyph at a time, each letter taking the next
+    /// palette colour and every letter sitting on the same baseline.
+    ///
+    /// The colours *march*: every <see cref="TitleStepSeconds"/> the whole
+    /// sequence shifts one place, so a letter that was white becomes blue and
+    /// the wordmark reads as a running light. The first version advanced the
+    /// index by <c>(int)phase</c> where phase is 0..1, which is zero almost
+    /// always — the colours looked frozen.
+    /// </summary>
+    /// <returns>The width of the drawn wordmark, for the rule underneath it.</returns>
+    private float DrawPaletteWordmark(string text, float time, float centerX, float top, float scale)
+    {
+        var font = TitleFont ?? _font!;
+        int step = (int)(time / TitleStepSeconds);
+        int count = ArcadePalette.TitleLetters.Length;
+
+        float advance = 0f;
+        for (int i = 0; i < text.Length; i++)
+            advance += font.MeasureString(text[i].ToString()).X * scale;
+
+        float x = centerX - advance / 2f;
+        for (int i = 0; i < text.Length; i++)
+        {
+            string glyph = text[i].ToString();
+            var colour = ArcadePalette.TitleLetters[(i + step) % count];
+
+            // A dark copy under each glyph. On black it is invisible, but it
+            // separates two adjacent letters of the same colour.
+            _spriteBatch.DrawString(font, glyph, new Vector2(x + 2f, top + 2f), ArcadePalette.Black,
+                0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+            _spriteBatch.DrawString(font, glyph, new Vector2(x, top), colour,
+                0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+
+            x += font.MeasureString(glyph).X * scale;
+        }
+
+        return advance;
+    }
+
+    /// <summary>Seconds between colour steps on the wordmark. Slow enough to
+    /// read as a deliberate march, fast enough to notice.</summary>
+    private const float TitleStepSeconds = 0.35f;
+
+    /// <summary>
+    /// The controls panel: a measured, centred box with a palette outline.
+    /// Sized from the longest line rather than a fixed 840 pixels, which ran
+    /// the text past its own border on a smaller window.
+    /// </summary>
+    /// <param name="bottom">The y the panel's lower edge sits on; it grows upward.</param>
+    /// <returns>The y of the panel's top edge, so the caller can space around it.</returns>
+    private float DrawControlsPanel(string[] lines, int cx, float bottom, float s)
+    {
+        var font = _font!;
+        float widest = 0f;
+        foreach (var line in lines) widest = MathF.Max(widest, font.MeasureString(line).X * s);
+
+        float pad = 18 * s;
+        float lineHeight = font.LineSpacing * s + 6 * s;
+        float panelW = widest + pad * 2;
+        float panelH = lines.Length * lineHeight + pad * 2;
+        var panel = new Rectangle(
+            (int)(cx - panelW / 2), (int)(bottom - panelH), (int)panelW, (int)panelH);
+
+        _spriteBatch.Draw(_uiPixel, panel, ArcadePalette.Black);
+        DrawPanelBorder(panel, ArcadePalette.Blue, Math.Max(1, (int)(2 * s)));
+
+        float y = panel.Y + pad;
+        foreach (var line in lines)
+        {
+            float lineW = font.MeasureString(line).X * s;
+            _spriteBatch.DrawString(font, line, new Vector2(panel.X + (panel.Width - lineW) / 2f, y),
+                ArcadePalette.White, 0f, Vector2.Zero, s, SpriteEffects.None, 0f);
+            y += lineHeight;
+        }
+
+        return panel.Y;
+    }
+
+    /// <summary>Outline for a panel, drawn as four rules so it stays crisp at any scale.</summary>
+    private void DrawPanelBorder(Rectangle r, Color colour, int thickness)
+    {
+        _spriteBatch.Draw(_uiPixel, new Rectangle(r.X, r.Y, r.Width, thickness), colour);
+        _spriteBatch.Draw(_uiPixel, new Rectangle(r.X, r.Bottom - thickness, r.Width, thickness), colour);
+        _spriteBatch.Draw(_uiPixel, new Rectangle(r.X, r.Y, thickness, r.Height), colour);
+        _spriteBatch.Draw(_uiPixel, new Rectangle(r.Right - thickness, r.Y, thickness, r.Height), colour);
+    }
+
+    /// <summary>Draws text at a scale, which DrawString's overloads do not do conveniently.</summary>
+    private void DrawScaledText(string text, float x, float y, float scale, Color colour) =>
+        _spriteBatch.DrawString(_font!, text, new Vector2(x, y), colour,
+            0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
 
     // The objective readout: how much is back, how much is still out, and
     // the timer. This is the whole scoreboard, so it stays in one place.
