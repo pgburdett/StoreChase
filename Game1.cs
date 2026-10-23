@@ -170,6 +170,16 @@ namespace StoreChase
         private VertexPositionNormalColorTexture[] _propVerts = null!;
 
         private RunPhase _phase = RunPhase.Title;
+
+    // Attract mode: after a few seconds idle on the title screen the game
+    // plays a demo round by itself for a couple of minutes, then returns to
+    // the attract screen. Any input exits the demo.
+    private bool _attractMode;
+    private float _attractIdleTimer;
+    private float _demoTimer;
+    private const float AttractIdleSeconds = 8f;
+    private const float DemoDurationSeconds = 150f;
+    private Vector2 _demoMoveDir = Vector2.Zero;
         private float _elapsedTime = 0f;
 
         // Cached per-frame values shared by the critters and the HUD.
@@ -857,19 +867,62 @@ namespace StoreChase
             if (_phase == RunPhase.Playing)
             {
                 _elapsedTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+                if (_attractMode)
+                {
+                    _demoTimer += (float)gameTime.ElapsedGameTime.TotalSeconds;
+                    // Any input exits the demo back to the attract screen.
+                    if (input.Start || input.Restart || input.Throw || input.Use
+                        || input.Move != Vector2.Zero || input.Tilt != 0f)
+                    {
+                        _attractMode = false;
+                        _phase = RunPhase.Title;
+                        _attractIdleTimer = 0f;
+                        StartRound(false);
+                        return;
+                    }
+                    if (_demoTimer >= DemoDurationSeconds)
+                    {
+                        _attractMode = false;
+                        _phase = RunPhase.Title;
+                        _attractIdleTimer = 0f;
+                        StartRound(false);
+                        return;
+                    }
+                    // Demo player AI is applied in UpdatePlay via _demoMoveDir.
+                }
+
                 UpdatePlay(gameTime, input);
             }
             else if (_phase == RunPhase.Title)
             {
-                // Either confirm button, because the gamepad's Start maps to
-                // Restart and the keyboard's Enter maps to Start. Accepting
-                // both is what lets a controller player actually get past the
-                // attract screen — before this, Start-only meant a pad could
-                // never begin a run.
+                _attractIdleTimer += (float)gameTime.ElapsedGameTime.TotalSeconds;
+                // Any input resets the idle timer (and, once a demo is not
+                // running, waits for an explicit start).
+                if (input.Start || input.Restart || input.Move != Vector2.Zero)
+                    _attractIdleTimer = 0f;
+
+                if (_attractIdleTimer >= AttractIdleSeconds && !_attractMode)
+                {
+                    _attractMode = true;
+                    _demoTimer = 0f;
+                    StartRound();
+                    return;
+                }
+
+                // Either confirm button...
                 if (input.Start || input.Restart) StartRound();
             }
             else
             {
+                if (_attractMode)
+                {
+                    // Demo: skip the shop and auto-restart the round.
+                    if (_phase == RunPhase.Won) _campaign.Advance();
+                    StartRound();
+                    return;
+                }
+
                 // Between rounds the shop is open: number keys 1-6 buy.
                 // Each press is a rising edge (see KeyboardMouseInput), so
                 // one press is one purchase.
@@ -915,8 +968,16 @@ namespace StoreChase
             // Isometric walks the grid cell to cell; first-person moves the
             // player freely (camera-relative) with wall sliding.
             bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
-            Vector2 moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
-            _player.IsCrouching = input.Crouch;
+            Vector2 moveDir;
+            if (_attractMode)
+            {
+                moveDir = ComputeDemoMoveDir();
+            }
+            else
+            {
+                moveDir = freeMove ? _camera.MapMoveToWorld(input) : input.Move;
+            }
+            _player.IsCrouching = false;
             _player.Update(simTime, _map, moveDir, freeMove);
 
             // Walking over a power-up pockets it — if the one slot is free.
@@ -1338,6 +1399,42 @@ namespace StoreChase
             foreach (var cell in map.WalkableCells()) { best = cell; found = true; break; }
         }
         return best;
+    }
+
+    private Vector2 ComputeDemoMoveDir()
+    {
+        GridPos target;
+        if (_items.Held != null)
+        {
+            // Secure: head for the nearest counter cell.
+            GridPos counterCell = new(_map.CounterStart, _map.CounterRow);
+            target = counterCell;
+        }
+        else
+        {
+            var loose = _items.NearestLoose(_player.Cell);
+            if (loose != null)
+                target = loose.Cell;
+            else
+            {
+                // Wander: pick a random walkable cell.
+                var cells = _map.WalkableCells().ToList();
+                target = cells.Count > 0 ? cells[_rng.Next(cells.Count)] : _player.Cell;
+            }
+        }
+
+        var step = _map.NextStepToward(_player.Cell, target);
+        if (step == null) return Vector2.Zero;
+
+        // Avoid walking into a cat.
+        foreach (var critter in _critters)
+        {
+            if (critter.Cell == step.Value) return Vector2.Zero;
+        }
+
+        int dx = step.Value.X - _player.Cell.X;
+        int dy = step.Value.Y - _player.Cell.Y;
+        return new Vector2(dx, dy);
     }
 
     private void UpdateCritters(GameTime gameTime)
