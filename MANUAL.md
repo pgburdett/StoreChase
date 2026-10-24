@@ -90,6 +90,10 @@ a time** (E on the keyboard, B on the gamepad):
 - **cat treat** — drop it and every cat within earshot makes for it, loot or
   no loot. The cheapest way to empty an aisle. A cat that eats one becomes a
   friend and shadows you instead of stealing
+- **floor trap** — set it where you stand; the first cat to step on it is
+  stunned 3s and drops whatever it was carrying
+- **laser pointer** — a moving dot that wanders the aisles for 6s; cats
+  chase it instead of you
 - **smoke bomb** (shop only) — panics every cat in earshot for six seconds
 
 You start each round empty-pocketed; what you carried is what you spent.
@@ -147,13 +151,15 @@ A run is a sequence of stores:
 - **you bank coins** — every secured item is worth its alarm weight × 10 (a
   tin 7c, a bag 10c, a carton 15c), plus a 25c bonus for clearing a store.
   The purse survives losses: a loss costs you the round, not the run
-- **the shop** is open on the end screen, six slots on keys 1–6:
+- **the shop** is open on the end screen, nine slots on keys 1–9:
   - consumables (queued, pocketed one per round): roller skates 15c, spray
     bottle 20c, cat treat 18c, smoke bomb 24c
   - permanents (three tiers each, priced at list × (tier + 1)):
     - **fast shoes** — +7% walk speed per tier
     - **calm nerves** — alarm decay ×1.15 per tier
     - **lucky charm** — counter-drop spike ×0.8 per tier
+    - **quiet shoes** — footsteps 25% quieter per tier
+    - **steady hands** — alarm rises 10% slower while carrying per tier
     - **quiet shoes** — your footsteps 25% quieter per tier
     - **steady hands** — alarm rises 10% slower while you carry goods per tier
 - **R advances** on a win and **retries** on a loss
@@ -174,7 +180,7 @@ Keyboard / mouse:
 - Left click / F: throw a ball (aimed along the camera's ground heading)
 - E: use — the pocketed power-up, or pull the fire alarm if you're standing
   on one (the alarm wins that priority; it's the bigger button)
-- 1–6: buy from the shop, between rounds
+- 1–9: buy from the shop, between rounds
 - Escape: quit
 - R: between rounds — next store on a win, retry on a loss
 

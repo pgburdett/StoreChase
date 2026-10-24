@@ -4,6 +4,9 @@ A grid-based chase game in a 3D store. Cats wander the aisles and steal
 merchandise off the shelves; you have to get it all back behind the counter
 before the store alarm fills.
 
+**Player instructions: see [`MANUAL.md`](MANUAL.md).** This README is the
+design/decision log for developers.
+
 Press **V** (or gamepad **Y**) to switch between the isometric overhead camera
 and a first-person mouse-look view. The two aren't just different ways of
 looking at the store — the first-person camera is a tactic, because a cat can
@@ -104,15 +107,20 @@ rather than wandering off.
 
 ### Power-ups
 
-Three one-use items sit on the shelves each round, and you may carry **one at
-a time** (E on the keyboard, B on the gamepad):
+Five one-use items sit on the shelves each round (one of every kind), and you
+may carry **one at a time** (E on the keyboard, B on the gamepad):
 
 - **roller skates** — 8 seconds at ×1.5 speed, the escape tool
 - **spray bottle** — panics every cat within range while you walk, for as long
   as you keep moving. It does not make them drop what they're carrying; it's a
   repositioning tool, not a weapon
 - **cat treat** — drop it and every cat within earshot makes for it, loot or
-  no loot. The cheapest way to empty an aisle
+  no loot. The cheapest way to empty an aisle; a cat that eats one becomes a
+  friend and shadows you instead of stealing
+- **floor trap** — set it where you stand; the first cat to step on it is
+  stunned 3s and drops whatever it was carrying
+- **laser pointer** — a moving dot that wanders the aisles for 6s; cats
+  chase it instead of you
 
 You also start each round empty-pocketed; what you carried is what you spent.
 (The shop between rounds sells more — see the campaign below.)
@@ -131,6 +139,18 @@ Two spills and a fire alarm are laid out each round:
   store panics (and drops any loot) and the alarm spikes by a fixed 15%.
   It's the one moment where the meter is your fault, so it's priced as a
   decision: trade 15% of the meter for total chaos
+
+### Shift events
+
+Mid-round, the store throws things at you (first event ~10–18s in, then every
+12–22s; a short round may see none):
+
+- **delivery** — fresh stock hits the shelves, pressure up
+- **power cut** — the lights go; cats can barely see for a few seconds
+- **alarm audit** — the manager audits the stockroom; the alarm drains a chunk
+- **rat** — a rat runs the aisles; every cat chases it
+- **bottle break** — a spill appears mid-aisle
+- **customer drop** — a customer drops their basket; free goods on the floor
 
 ### The juice layer
 
@@ -157,11 +177,13 @@ A run is a sequence of stores (see `Campaign.cs`, all headless):
 - **you bank coins** — every secured item is worth its alarm weight × 10 (a
   tin 7c, a bag 10c, a carton 15c), plus a 25c bonus for clearing a store.
   The purse survives losses: a loss costs you the round, not the run
-- **the shop** is open on the end screen, six slots on keys 1–6:
-  three consumables (skates 15c, spray 20c, treat 18c — queued, and pocketed
-  one per round) and three permanents in three tiers each, priced at list ×
-  (tier + 1): **fast shoes** (+7% speed/tier), **calm nerves** (alarm decay
-  ×1.15/tier), **lucky charm** (counter-drop spike ×0.8/tier)
+- **the shop** is open on the end screen, nine slots on keys 1–9:
+  four consumables (skates 15c, spray 20c, treat 18c, smoke bomb 24c —
+  queued, and pocketed one per round) and five permanents in three tiers
+  each, priced at list × (tier + 1): **fast shoes** (+7% speed/tier),
+  **calm nerves** (alarm decay ×1.15/tier), **lucky charm** (counter-drop
+  spike ×0.8/tier), **quiet shoes** (footsteps 25% quieter/tier),
+  **steady hands** (alarm rises 10% slower while carrying/tier)
 - **R advances** on a win and **retries** on a loss
 
 The coin hook is `ItemField.ItemSecured`, so *every* path to the counter pays
@@ -185,7 +207,7 @@ Keyboard / mouse:
 - Left click / F: throw a ball (aimed along the camera's ground heading)
 - E: use — the pocketed power-up, or pull the fire alarm if you're standing
   on one (the alarm wins that priority; it's the bigger button)
-- 1–6: buy from the shop, between rounds
+- 1–9: buy from the shop, between rounds
 - Escape: quit
 - R: between rounds — next store on a win, retry on a loss
 
