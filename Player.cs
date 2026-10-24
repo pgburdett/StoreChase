@@ -25,9 +25,9 @@ namespace StoreChase
         private GridPos _from;
         private GridPos _to;
         private float _t;
-        private const float MoveSpeed = 4.5f;   // grid steps per second
-        private const float FreeMoveSpeed = 6f; // world units per second (first-person)
-        private const float FreeRadius = 0.35f; // collision radius for free movement (world units)
+        private const float MoveSpeed = GameConstants.MoveSpeed;   // grid steps per second
+        private const float FreeMoveSpeed = GameConstants.FreeMoveSpeed; // world units per second (first-person)
+        private const float FreeRadius = GameConstants.FreeRadius; // collision radius for free movement (world units)
 
         /// <summary>
         /// The player's grid speed, in cells per second.
@@ -59,7 +59,7 @@ namespace StoreChase
         public bool Slipping => _slipTimer > 0f;
 
         /// <summary>How fast a slip shoves you along, on top of any boost.</summary>
-        public const float SlipSpeedBoost = 1.35f;
+        public const float SlipSpeedBoost = GameConstants.SlipSpeedBoost;
 
         /// <summary>
         /// Hits the player with a spill: for the next <paramref name="seconds"/>

@@ -146,4 +146,37 @@ public static class ArcadePalette
     {
         White, Blue, Yellow, Orange, Magenta, Green,
     };
+
+    /// <summary>Role types for easier color lookup.</summary>
+    public enum Role
+    {
+        Player,
+        Thief,
+        Loot,
+        Customer,
+        Counter,
+        Structure,
+        Goods,
+        Text,
+        TextDim,
+        Panel,
+        Border
+    }
+
+    /// <summary>Get color for a specific role.</summary>
+    public static Color GetColorForRole(Role role) => role switch
+    {
+        Role.Player => Player,
+        Role.Thief => Thief,
+        Role.Loot => Loot,
+        Role.Customer => Customer,
+        Role.Counter => Counter,
+        Role.Structure => Structure,
+        Role.Goods => Goods,
+        Role.Text => Text,
+        Role.TextDim => TextDim,
+        Role.Panel => Panel,
+        Role.Border => Border,
+        _ => White
+    };
 }

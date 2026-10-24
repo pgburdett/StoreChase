@@ -51,6 +51,9 @@ namespace StoreChase
             return _cells[x, y] == 0;
         }
 
+        /// <summary>Check if a cell is walkable (alias for clarity).</summary>
+        public bool IsWalkableCell(int x, int y) => IsWalkable(x, y);
+
         public int this[int x, int y] => _cells[x, y];
 
         // The front counter: the run of cells along the top aisle that the
@@ -76,7 +79,7 @@ namespace StoreChase
         // How tall the counter slab is drawn, in world units. Lives here beside
         // the counter cells themselves so Game1 (which draws it) and ItemField
         // (which stacks recovered goods on top of it) can't disagree.
-        public const float CounterHeight = 0.35f;
+        public const float CounterHeight = GameConstants.CounterHeight;
 
         // Straight-line visibility between two cells, ignoring whether the
         // endpoints are walkable (the player standing in an aisle can see

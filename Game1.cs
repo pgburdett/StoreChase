@@ -25,8 +25,8 @@ namespace StoreChase
     {
         private GraphicsDeviceManager _graphics;
 
-        private const float CellSize = 2f; // world units per grid cell
-        private const float WalkCycleSpeed = 12f; // radians/sec of the player's limb swing
+        private const float CellSize = GameConstants.CellSize; // world units per grid cell
+        private const float WalkCycleSpeed = GameConstants.WalkCycleSpeed; // radians/sec of the player's limb swing
 
         private GridMap _map = null!;
         private Player _player = null!;
@@ -189,7 +189,7 @@ namespace StoreChase
 
         public const int LootCount = 5;
         public const int CritterCount = 3;
-        public const float CarryHeight = 1.5f;
+        public const float CarryHeight = GameConstants.CarryHeight;
 
         // ---- Power-ups ---------------------------------------------------
         // How long the skates last and how much they give. 1.5x is noticeable
@@ -2107,10 +2107,13 @@ namespace StoreChase
             foreach (var customer in _customers)
             {
                 if (customer.Escaped) continue;
-                var tint = customer.IsShoplifter
-                    ? new Color(220, 70, 60)   // red: the thief, clearly distinct from the player's blue
-                    : new Color(170, 180, 200);   // cool grey: a regular shopper
-
+                var tint = new Color(170, 180, 200); 
+                if (customer.IsShoplifter)
+                {
+                    //tint = new Color(220, 70, 60);
+                    tint = new Color(255, 0, 0);
+                }
+                
                 var facing = Matrix.CreateRotationY(customer.FacingAngle);
                 var placement = Matrix.CreateTranslation(customer.WorldPos);
 

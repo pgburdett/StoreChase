@@ -13,6 +13,12 @@ namespace StoreChase
         FirstPerson,
     }
 
+    public enum CameraMode
+    {
+        Isometric,
+        FirstPerson,
+    }
+
     // Single source of truth for camera state and controls. Game1 used to
     // own this math inline; the values below match that validated behavior.
     /// <summary>
@@ -90,11 +96,11 @@ namespace StoreChase
         public const float MaxZoom = 2.5f;   // most zoomed out
         public const float PanSpeed = 12f;   // world units per second
         public const float ZoomStep = 0.1f;  // per wheel notch
-        public const float MaxTiltDegrees = 80f; // near-horizontal, but never quite level
-        public const float TiltSpeed = 45f;  // degrees per second
+        public const float MaxTiltDegrees = GameConstants.MaxTiltDegrees; // near-horizontal, but never quite level
+        public const float TiltSpeed = GameConstants.TiltSpeed;  // degrees per second
 
-        public const float DefaultTiltDegrees = 45f;
-        public const float DefaultZoom = 0.6f;
+        public const float DefaultTiltDegrees = GameConstants.DefaultTiltDegrees;
+        public const float DefaultZoom = GameConstants.DefaultZoom;
 
         // How many cells of the store are visible across the screen at zoom 1.
         //
@@ -103,15 +109,15 @@ namespace StoreChase
         // wider than this needs the camera to follow the player. It used to be
         // "the whole map, plus padding", which meant the view size grew with
         // the store and there was nothing to scroll.
-        public const float ViewCellsWide = 16f;
+        public const float ViewCellsWide = GameConstants.ViewCellsWide;
 
         // First-person: look radians per look unit (≈mouse pixel), the eye
         // height from PersonMesh's head center, and the FOV/near plane.
-        public const float LookSensitivity = 0.0025f;
-        public const float MaxPitchDegrees = 85f;
-        public const float FirstPersonEyeHeight = 2.2f;
-        public const float FirstPersonFovDegrees = 60f;
-        public const float FirstPersonNearPlane = 0.05f;
+        public const float LookSensitivity = GameConstants.LookSensitivity;
+        public const float MaxPitchDegrees = GameConstants.MaxPitchDegrees;
+        public const float FirstPersonEyeHeight = GameConstants.FirstPersonEyeHeight;
+        public const float FirstPersonFovDegrees = GameConstants.FirstPersonFovDegrees;
+        public const float FirstPersonNearPlane = GameConstants.FirstPersonNearPlane;
 
         // Screen shake. Gameplay calls AddShake (tackles, alarm spikes, the
         // fire alarm); Update decays it, and the matrix builders apply the
@@ -119,9 +125,9 @@ namespace StoreChase
         // frustum translation, which reads as a shake in the orthographic and
         // perspective paths alike and leaves FocusPoint (what the framing
         // tests measure) untouched.
-        public const float MaxShake = 1f;
-        public const float ShakeDecay = 2.4f;       // strength units per second
-        public const float ShakeWorldScale = 0.3f;  // world units of jitter at full strength
+        public const float MaxShake = GameConstants.MaxShake;
+        public const float ShakeDecay = GameConstants.ShakeDecay;       // strength units per second
+        public const float ShakeWorldScale = GameConstants.ShakeWorldScale;  // world units of jitter at full strength
 
         private float _shake;
         private readonly Random _shakeRng = new();
@@ -132,6 +138,9 @@ namespace StoreChase
         /// <summary>Adds shake, accumulating up to <see cref="MaxShake"/>.</summary>
         public void AddShake(float amplitude) =>
             _shake = Math.Min(MaxShake, _shake + Math.Max(0f, amplitude));
+
+        /// <summary>Camera field of view property for easier adjustment.</summary>
+        public float CameraFov { get; set; } = GameConstants.CameraFOV;
 
         // A fresh random offset for this frame's matrices. Zero when steady,
         // so a camera that was never shaken is deterministic (which is what
@@ -280,7 +289,7 @@ namespace StoreChase
                 // distance instead (baseDistance above), which is the usual
                 // way to "zoom" a perspective camera without warping the FOV.
                 Projection = Matrix.CreatePerspectiveFieldOfView(
-                    MathHelper.ToRadians(50f), aspect, 0.1f, 300f);
+                    MathHelper.ToRadians(GameConstants.CameraFOV), aspect, 0.1f, 300f);
             }
         }
 
@@ -306,6 +315,14 @@ namespace StoreChase
                 : Math.Clamp(center.Y, _mapOriginY + halfH, _mapOriginY + _mapHeightWorld - halfH);
 
             return new Vector2(x, y);
+        }
+
+        /// <summary>Clamp focus point to map bounds.</summary>
+        public Vector3 ClampFocusPointToMap(Vector3 point)
+        {
+            float clampedX = MathHelper.Clamp(point.X, _mapOriginX, _mapOriginX + _mapWidthWorld);
+            float clampedZ = MathHelper.Clamp(point.Z, _mapOriginY, _mapOriginY + _mapHeightWorld);
+            return new Vector3(clampedX, point.Y, clampedZ);
         }
 
         /// <summary>
