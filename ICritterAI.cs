@@ -152,4 +152,12 @@ public interface ICritterAI
 
     /// <summary>What the AI wants the body to be doing, for the animation rig.</summary>
     CatPose Pose { get; }
+
+    /// <summary>
+    /// What the AI has decided the body should be doing right now.
+    ///
+    /// Descriptive only — set by <see cref="DecideNextMove"/>, read by the
+    /// HUD/debug tools and the harness. Nothing in gameplay branches on it.
+    /// </summary>
+    AIState State { get; }
 }

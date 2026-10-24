@@ -86,6 +86,16 @@ public class Critter
     /// <summary>What the AI wants the body doing; drives the animation rig.</summary>
     public CatPose Pose { get; set; } = CatPose.Stand;
 
+    /// <summary>
+    /// What this critter is doing right now, as the AI last reported it.
+    ///
+    /// Descriptive only — nothing in gameplay branches on it; it exists so
+    /// the HUD, debug tools and the harness can answer "why is that cat
+    /// standing there" without duplicating the AI's priority order. A stun
+    /// overrides whatever the AI says, since a stunned cat decides nothing.
+    /// </summary>
+    public AIState State => Stunned ? AIState.Stunned : _ai.State;
+
     /// <summary>This cat's current mood.</summary>
     public Mood Mood { get; set; } = Mood.Calm;
 

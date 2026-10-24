@@ -25,6 +25,12 @@ namespace StoreChase
 
         private readonly int[,] _cells;
 
+        // Memoised distance maps, keyed by origin (see DistanceMapFrom).
+        // Small on purpose: a store grid is a few hundred cells, and the
+        // origins that matter are the player and the cats.
+        private const int DistanceCacheSize = 32;
+        private readonly Dictionary<GridPos, int[,]> _distCache = new();
+
         /// <summary>Creates a map from a floor plan.</summary>
         public GridMap(StoreLayout layout)
         {
@@ -197,17 +203,84 @@ namespace StoreChase
             return step;
         }
 
+        /// <summary>
+        /// The whole shortest path from <paramref name="from"/> (exclusive) to
+        /// <paramref name="to"/> (inclusive), or an empty list when there is
+        /// no route.
+        ///
+        /// One BFS — a distance map from the goal — then a walk downhill in
+        /// the same direction order <see cref="NextStepToward"/> expands in.
+        /// The old pattern called <see cref="NextStepToward"/> once per step,
+        /// which is one full BFS per cell of the path; building a 20-step
+        /// escape route cost twenty grid sweeps. This costs one.
+        ///
+        /// The result is a shortest path by construction, same as before; when
+        /// several shortest routes exist it picks by first walkable direction,
+        /// which is the same tie-break the per-step BFS had.
+        /// </summary>
+        public List<GridPos> PathTo(GridPos from, GridPos to)
+        {
+            var path = new List<GridPos>();
+            if (from == to) return path;
+
+            var dist = DistanceMapFrom(to);
+            if (dist[from.X, from.Y] == int.MaxValue) return path;
+
+            GridPos[] dirs = { new(0, -1), new(0, 1), new(-1, 0), new(1, 0) };
+
+            var current = from;
+            int safety = Width * Height; // never more steps than cells
+            while (current != to && safety-- > 0)
+            {
+                int here = dist[current.X, current.Y];
+                GridPos? next = null;
+                foreach (var d in dirs)
+                {
+                    var candidate = new GridPos(current.X + d.X, current.Y + d.Y);
+                    if (!IsWalkable(candidate.X, candidate.Y)) continue;
+                    if (dist[candidate.X, candidate.Y] == here - 1) { next = candidate; break; }
+                }
+                if (next == null) break; // unreachable in practice: guarded above
+                path.Add(next.Value);
+                current = next.Value;
+            }
+            return path;
+        }
+
         // Full BFS distance map from `origin`, following walls (unlike
         // Manhattan distance, this won't think a tile is "close" if it's
         // actually on the other side of a shelf). Unreachable tiles get
         // int.MaxValue. Used by the critter AI to judge how good an escape
         // tile actually is once shelves are in the way.
+        //
+        // The map is immutable, so a distance map is a pure function of its
+        // origin — results are memoised, because every cat that flees at the
+        // same moment wants the map from the *player's* cell and used to
+        // compute its own identical copy (five cats fleeing = five identical
+        // grid sweeps). Callers must treat the returned array as read-only.
         /// <summary>
         /// Full BFS distance map from <paramref name="origin"/>, following walls.
         /// Unreachable tiles get <see cref="int.MaxValue"/>. Used by the critter
         /// AI to judge how good an escape tile actually is.
+        ///
+        /// Memoised (the map is immutable, so the result depends only on the
+        /// origin) and therefore shared: treat the returned array as
+        /// read-only. Callers that need to mutate one should copy it.
         /// </summary>
         public int[,] DistanceMapFrom(GridPos origin)
+        {
+            if (_distCache.TryGetValue(origin, out var cached)) return cached;
+
+            var dist = ComputeDistanceMap(origin);
+
+            // Bounded so a long session that touches many origins can't grow
+            // without limit; maps are recomputed on demand after a clear.
+            if (_distCache.Count >= DistanceCacheSize) _distCache.Clear();
+            _distCache[origin] = dist;
+            return dist;
+        }
+
+        private int[,] ComputeDistanceMap(GridPos origin)
         {
             var dist = new int[Width, Height];
             for (int x = 0; x < Width; x++)

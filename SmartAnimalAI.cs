@@ -68,6 +68,9 @@ public class SmartAnimalAI : ICritterAI
     /// <summary>The current pose target for the animation rig.</summary>
     public CatPose Pose { get; private set; }
 
+    /// <summary>What this AI last decided the body should be doing.</summary>
+    public AIState State { get; private set; } = AIState.Idle;
+
     /// <summary>Creates a new SmartAnimalAI with the given profile and RNG.</summary>
     public SmartAnimalAI(CritterProfile profile, Random rng)
     {
@@ -113,6 +116,7 @@ public class SmartAnimalAI : ICritterAI
         {
             _currentPath.Clear();
             _startleTimer = MathF.Max(_startleTimer, 0.4f);
+            State = AIState.Fleeing;
             return Flee(context);
         }
 
@@ -122,6 +126,7 @@ public class SmartAnimalAI : ICritterAI
             if (ShouldTakeLoot(context, out bool paused))
             {
                 WantsToSteal = true;
+                State = AIState.Idle; // busy grabbing, not moving
                 if (paused) return null;
                 // Otherwise fall through and keep moving; it grabbed it on the way.
             }
@@ -135,6 +140,7 @@ public class SmartAnimalAI : ICritterAI
         {
             _freezeTimer = 0.5f;
             _currentPath.Clear();
+            State = AIState.Idle; // pinned to the spot
             return null;
         }
 
@@ -145,6 +151,7 @@ public class SmartAnimalAI : ICritterAI
         if (context.Ball is { } ball && !_profile.IgnoresBall && !context.Carrying)
         {
             _currentPath.Clear();
+            State = AIState.Investigating;
             return PathStepToward(context.Map, context.CurrentCell, ball);
         }
 
@@ -158,10 +165,12 @@ public class SmartAnimalAI : ICritterAI
             if (context.CurrentCell == treat)
             {
                 WantsTreat = true;
+                State = AIState.Idle; // busy eating
                 return null; // busy eating
             }
 
             _currentPath.Clear();
+            State = AIState.Investigating;
             return PathStepToward(context.Map, context.CurrentCell, treat);
         }
 
@@ -175,6 +184,7 @@ public class SmartAnimalAI : ICritterAI
             if (!_patrolTarget.HasValue || _patrolTarget.Value == context.CurrentCell)
                 _patrolTarget = PickPatrolTarget(context.Map, context.CurrentCell, _rng);
             _currentPath.Clear();
+            State = AIState.Patrolling;
             return PathStepToward(context.Map, context.CurrentCell, _patrolTarget.Value);
         }
 
@@ -183,12 +193,16 @@ public class SmartAnimalAI : ICritterAI
         // stealing for good (see ShouldTakeLoot), so there is nothing else
         // in the world it wants.
         if (context.Befriended)
+        {
+            State = AIState.Patrolling; // following the player
             return FollowPlayer(context, dist);
+        }
 
         // 6/7. Carrying loot. Close and looking -> get away. Far enough -> take
         // the long run at the counter.
         if (context.Carrying)
         {
+            State = threatened ? AIState.Fleeing : AIState.Escaping;
             return threatened
                 ? Flee(context)
                 : HeadForCounter(context);
@@ -198,12 +212,14 @@ public class SmartAnimalAI : ICritterAI
         if (threatened)
         {
             _startleTimer = 0.8f;
+            State = AIState.Fleeing;
             return Flee(context);
         }
 
         // 8. Noticed you, but no rush.
         if (context.CanSeePlayer && dist <= _profile.AlertRadius)
         {
+            State = AIState.Investigating;
             return Alert(context);
         }
 
@@ -217,7 +233,10 @@ public class SmartAnimalAI : ICritterAI
         if (context.LastSeenPlayerCell is { } lastSeen && context.PlayerAwareness > 0f)
         {
             if (dist > _profile.AlertRadius)
+            {
+                State = AIState.Investigating;
                 return PathStepToward(context.Map, context.CurrentCell, lastSeen);
+            }
         }
 
         // 9. Nothing happening. Go and find something to steal, or wander.
@@ -230,9 +249,13 @@ public class SmartAnimalAI : ICritterAI
                 drive = MathF.Max(drive, _profile.ThiefDrive * 0.75f);
 
             if (_rng.NextDouble() < drive)
+            {
+                State = AIState.Chasing;
                 return PathStepToward(context.Map, context.CurrentCell, item.Cell);
+            }
         }
 
+        State = AIState.Patrolling;
         return Wander(context);
     }
 
@@ -524,21 +547,12 @@ public class SmartAnimalAI : ICritterAI
     private static GridPos? PathStepToward(GridMap map, GridPos from, GridPos to)
         => from == to ? null : map.NextStepToward(from, to);
 
+    // Builds a whole path in one BFS. GridMap.PathTo computes a distance map
+    // from the goal once and walks downhill — the old version called
+    // NextStepToward once per step, which was a full grid sweep per cell of
+    // the route (twenty steps = twenty sweeps, per cat, per replan).
     private List<GridPos> BuildPathTo(GridMap map, GridPos from, GridPos to)
-    {
-        var path = new List<GridPos>();
-        var current = from;
-        int safety = 64;
-
-        while (current != to && safety-- > 0)
-        {
-            var next = map.NextStepToward(current, to);
-            if (!next.HasValue) break;
-            path.Add(next.Value);
-            current = next.Value;
-        }
-        return path;
-    }
+        => map.PathTo(from, to);
 
     private GridPos[] ShuffledDirections()
     {
