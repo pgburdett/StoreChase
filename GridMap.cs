@@ -209,14 +209,17 @@ namespace StoreChase
         /// no route.
         ///
         /// One BFS — a distance map from the goal — then a walk downhill in
-        /// the same direction order <see cref="NextStepToward"/> expands in.
-        /// The old pattern called <see cref="NextStepToward"/> once per step,
+        /// the direction order <see cref="NextStepToward"/> expands in. The
+        /// old pattern called <see cref="NextStepToward"/> once per step,
         /// which is one full BFS per cell of the path; building a 20-step
         /// escape route cost twenty grid sweeps. This costs one.
         ///
-        /// The result is a shortest path by construction, same as before; when
-        /// several shortest routes exist it picks by first walkable direction,
-        /// which is the same tie-break the per-step BFS had.
+        /// The result is always a shortest path (each step strictly decreases
+        /// the goal distance). When several shortest routes exist this may
+        /// choose a *different* one than <see cref="NextStepToward"/> — the
+        /// two expand in the same direction order but from opposite ends —
+        /// which is fine: the game consumes whole paths, never compares the
+        /// two.
         /// </summary>
         public List<GridPos> PathTo(GridPos from, GridPos to)
         {

@@ -22,7 +22,7 @@ public readonly record struct HudState(
     AlarmCause AlarmCause,
     AlarmStage AlarmStage,
     float AlarmLevel,
-    CameraViewMode ViewMode,
+    CameraMode ViewMode,
     Matrix ViewProjection,
     IReadOnlyList<Critter> Critters,
     IReadOnlyList<LootItem> Loot,
@@ -613,7 +613,7 @@ public sealed class Hud
             line.Y += step;
         }
 
-        string view = state.ViewMode == CameraViewMode.FirstPerson ? "first-person" : "isometric";
+        string view = state.ViewMode == CameraMode.FirstPerson ? "first-person" : "isometric";
         _spriteBatch.DrawString(font, $"[V] view: {view}", new Vector2(16, _graphicsDevice.Viewport.Height - 60), Color.LightGray);
     }
 
@@ -694,15 +694,15 @@ public sealed class Hud
 
         var fill = state.AlarmCause switch
         {
-            AlarmCause.Thief => new Color(226, 84, 66),
-            AlarmCause.PlayerCarrying => new Color(230, 176, 64),
-            _ => new Color(96, 176, 112),
+            AlarmCause.Thief => ArcadePalette.Thief,
+            AlarmCause.PlayerCarrying => ArcadePalette.Yellow,
+            _ => ArcadePalette.Green,
         };
 
-        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, height), new Color(30, 30, 38));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, height), ArcadePalette.Dim(ArcadePalette.White, 0.88f));
         _spriteBatch.Draw(_uiPixel,
             new Rectangle(x, y, (int)(width * state.AlarmLevel), height), fill);
-        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, 2), new Color(90, 90, 100));
+        _spriteBatch.Draw(_uiPixel, new Rectangle(x, y, width, 2), ArcadePalette.Dim(ArcadePalette.White, 0.62f));
 
         string label = state.AlarmCause switch
         {
@@ -765,7 +765,7 @@ public sealed class Hud
             _spriteBatch.DrawString(_font!, pocket,
                 new Vector2(16, _graphicsDevice.Viewport.Height - 84), new Color(140, 200, 240));
 
-        string hint = state.ViewMode == CameraViewMode.FirstPerson
+        string hint = state.ViewMode == CameraMode.FirstPerson
             ? "[click] throw a ball    [V] overhead"
             : "[V] first-person (to aim throws & pin nervous cats)";
         _spriteBatch.DrawString(_font!, hint, new Vector2(16, _graphicsDevice.Viewport.Height - 34), Color.Gray);
@@ -813,7 +813,7 @@ public sealed class Hud
                 float r = MathHelper.ToRadians(a);
                 _spriteBatch.Draw(_uiPixel,
                     new Rectangle(cx + (int)(MathF.Cos(r) * 18) - 1, cy + (int)(MathF.Sin(r) * 18) - 1, 3, 3),
-                    new Color(226, 84, 66));
+                    ArcadePalette.Thief);
             }
         }
         else
@@ -834,12 +834,12 @@ public sealed class Hud
 
             _spriteBatch.Draw(_uiPixel,
                 new Rectangle((int)edge.X - 5, (int)edge.Y - 5, 10, 10),
-                new Color(226, 84, 66));
+                ArcadePalette.Thief);
         }
 
             // The species name, so the player learns which cat is the trouble.
         _spriteBatch.DrawString(_font!, thief.Profile.Name,
-            new Vector2(projected.X - 40, projected.Y + 24), new Color(226, 84, 66));
+            new Vector2(projected.X - 40, projected.Y + 24), ArcadePalette.Thief);
     }
 
     // Floating texts: "+1 secured", "SLIP!", the cost of the fire alarm.

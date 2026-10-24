@@ -13,18 +13,29 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
     private bool _previousToggle;
     private bool _previousThrow;
     private bool _previousUse;
-    private readonly bool[] _previousBuy = new bool[ShopSlotCount];
+    private readonly bool[] _previousBuy;
     private bool _previousStart;
     private bool _mouseCaptured;
 
-    /// <summary>How many number keys the shop reads (slots 1..9).</summary>
-    private const int ShopSlotCount = 9;
+    /// <summary>Where the keys come from. Defaults to the shipping scheme
+    /// (see <see cref="InputMapper.Default"/>); a rebind screen or a test
+    /// can supply its own.</summary>
+    private readonly InputMapper _map;
 
-    private static readonly Keys[] ShopKeys =
+    /// <summary>How many shop slots the mapper exposes (slots 1..N).</summary>
+    private int ShopSlotCount => _map.BuySlots.Length;
+
+    /// <summary>Creates a keyboard+mouse source with the default bindings.</summary>
+    public KeyboardMouseInput() : this(InputMapper.Default)
     {
-        Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6,
-        Keys.D7, Keys.D8, Keys.D9,
-    };
+    }
+
+    /// <summary>Creates a keyboard+mouse source with the given bindings.</summary>
+    public KeyboardMouseInput(InputMapper map)
+    {
+        _map = map;
+        _previousBuy = new bool[map.BuySlots.Length];
+    }
 
     /// <summary>Always <see cref="InputDeviceKind.KeyboardMouse"/>.</summary>
     public InputDeviceKind Kind => InputDeviceKind.KeyboardMouse;
@@ -45,22 +56,22 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
         // Grid movement: one axis at a time, first match wins (matches the
         // original held-direction behavior).
         Vector2 move = Vector2.Zero;
-        if (kb.IsKeyDown(Keys.Up) || kb.IsKeyDown(Keys.W)) move.Y -= 1f;
-        else if (kb.IsKeyDown(Keys.Down) || kb.IsKeyDown(Keys.S)) move.Y += 1f;
-        else if (kb.IsKeyDown(Keys.Left) || kb.IsKeyDown(Keys.A)) move.X -= 1f;
-        else if (kb.IsKeyDown(Keys.Right) || kb.IsKeyDown(Keys.D)) move.X += 1f;
+        if (kb.IsKeyDown(_map.MoveUp) || kb.IsKeyDown(_map.MoveUpAlt)) move.Y -= 1f;
+        else if (kb.IsKeyDown(_map.MoveDown) || kb.IsKeyDown(_map.MoveDownAlt)) move.Y += 1f;
+        else if (kb.IsKeyDown(_map.MoveLeft) || kb.IsKeyDown(_map.MoveLeftAlt)) move.X -= 1f;
+        else if (kb.IsKeyDown(_map.MoveRight) || kb.IsKeyDown(_map.MoveRightAlt)) move.X += 1f;
 
-        // I/J/K/L pan the camera; deliberately not WASD/arrows (player).
+        // Pan the camera; deliberately not WASD/arrows (player).
         Vector2 pan = Vector2.Zero;
-        if (kb.IsKeyDown(Keys.I)) pan.Y -= 1f;
-        if (kb.IsKeyDown(Keys.K)) pan.Y += 1f;
-        if (kb.IsKeyDown(Keys.J)) pan.X -= 1f;
-        if (kb.IsKeyDown(Keys.L)) pan.X += 1f;
+        if (kb.IsKeyDown(_map.PanUp)) pan.Y -= 1f;
+        if (kb.IsKeyDown(_map.PanDown)) pan.Y += 1f;
+        if (kb.IsKeyDown(_map.PanLeft)) pan.X -= 1f;
+        if (kb.IsKeyDown(_map.PanRight)) pan.X += 1f;
 
-        // U/O tilt between straight-down (0) and angled perspective.
+        // Tilt between straight-down (0) and angled perspective.
         float tilt = 0f;
-        if (kb.IsKeyDown(Keys.O)) tilt += 1f;
-        if (kb.IsKeyDown(Keys.U)) tilt -= 1f;
+        if (kb.IsKeyDown(_map.TiltUp)) tilt += 1f;
+        if (kb.IsKeyDown(_map.TiltDown)) tilt -= 1f;
 
         // Mouse wheel is cumulative; diff against last frame for the delta.
         // One notch is typically 120 units.
@@ -91,35 +102,36 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
 
         // V flips between isometric and first-person; report the rising edge
         // only, so holding the key doesn't toggle every frame.
-        bool toggleNow = kb.IsKeyDown(Keys.V);
+        bool toggleNow = kb.IsKeyDown(_map.ToggleCamera);
         bool toggle = toggleNow && !_previousToggle;
         _previousToggle = toggleNow;
 
-        // Throw: left mouse button, or F for keyboard-only players. Rising
-        // edge, like the camera toggle, so holding it doesn't spam balls.
-        // (In first person the pointer is captured, which doesn't affect the
-        // button state — only the position — so the click still registers.)
-        bool throwNow = ms.LeftButton == ButtonState.Pressed || kb.IsKeyDown(Keys.F);
+        // Throw: left mouse button, or the throw key for keyboard-only
+        // players. Rising edge, like the camera toggle, so holding it
+        // doesn't spam balls. (In first person the pointer is captured,
+        // which doesn't affect the button state — only the position — so
+        // the click still registers.)
+        bool throwNow = ms.LeftButton == ButtonState.Pressed || kb.IsKeyDown(_map.Throw);
         bool throwPressed = throwNow && !_previousThrow;
         _previousThrow = throwNow;
 
-        // Use: E for the keyboard (F and R are taken; E sits under the left
-        // hand next to WASD). Rising edge, same reason as the others.
-        bool useNow = kb.IsKeyDown(Keys.E);
+        // Use: sits under the left hand next to WASD. Rising edge, same
+        // reason as the others.
+        bool useNow = kb.IsKeyDown(_map.Use);
         bool usePressed = useNow && !_previousUse;
         _previousUse = useNow;
 
-        // Shop slots: number keys 1-6, rising edge per key. Only the shop
-        // reads these (between rounds), so a held digit buys once.
+        // Shop slots: rising edge per key. Only the shop reads these
+        // (between rounds), so a held digit buys once.
         int buySlot = 0;
         for (int i = 0; i < ShopSlotCount; i++)
         {
-            bool down = kb.IsKeyDown(ShopKeys[i]);
+            bool down = kb.IsKeyDown(_map.BuySlots[i]);
             if (down && !_previousBuy[i]) buySlot = i + 1;
             _previousBuy[i] = down;
         }
 
-        bool startDown = kb.IsKeyDown(Keys.Enter) || kb.IsKeyDown(Keys.Space);
+        bool startDown = kb.IsKeyDown(_map.Start) || kb.IsKeyDown(_map.StartAlt);
         bool startPressed = startDown && !_previousStart;
         _previousStart = startDown;
 
@@ -131,11 +143,11 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             Zoom = zoom,
             Look = look,
             ToggleCamera = toggle,
-            Restart = kb.IsKeyDown(Keys.R),
-            Exit = kb.IsKeyDown(Keys.Escape),
+            Restart = kb.IsKeyDown(_map.Restart),
+            Exit = kb.IsKeyDown(_map.Exit),
             Throw = throwPressed,
             Use = usePressed,
-            Crouch = kb.IsKeyDown(Keys.LeftControl),
+            Crouch = kb.IsKeyDown(_map.Crouch),
             BuySlot = buySlot,
             Start = startPressed,
         };

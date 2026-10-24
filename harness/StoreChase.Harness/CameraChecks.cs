@@ -115,6 +115,55 @@ public static class CameraChecks
                 !acrossVisible || viewWidth >= mapW,
                 acrossVisible ? "the far corner is visible" : "the far corner is not visible");
         }
+
+        // --- Mode toggle: V flips isometric <-> first person and back, and
+        // the round trip must return the exact view, or toggling into FPS to
+        // aim a throw and back out loses where you were looking.
+        var toggleCam = new Camera(aspect, StoreLayouts.Standard.Width * cellSize,
+            StoreLayouts.Standard.Height * cellSize, cellSize);
+
+        // Seed some iso state to check it survives the round trip.
+        toggleCam.Update(Frame(), new InputState { Zoom = -2f, Tilt = 1f },
+            World(StoreLayouts.Standard.PlayerStart, cellSize), 0f);
+        float zoomBefore = toggleCam.Zoom;
+        float tiltBefore = toggleCam.TiltDegrees;
+
+        toggleCam.Update(Frame(), new InputState { ToggleCamera = true },
+            World(StoreLayouts.Standard.PlayerStart, cellSize), 0f);
+        Check.That("a toggle switch to first person",
+            toggleCam.Mode == CameraMode.FirstPerson);
+
+        // The rising edge must not re-toggle while held: a second update with
+        // the same input state reports the edge only once in InputState, but
+        // the camera must also tolerate a held flag without flapping.
+        toggleCam.Update(Frame(), InputState.Neutral,
+            World(StoreLayouts.Standard.PlayerStart, cellSize), 0f);
+        Check.That("first person persists without a new toggle",
+            toggleCam.Mode == CameraMode.FirstPerson);
+
+        toggleCam.Update(Frame(), new InputState { ToggleCamera = true },
+            World(StoreLayouts.Standard.PlayerStart, cellSize), 0f);
+        Check.That("a second toggle returns to isometric",
+            toggleCam.Mode == CameraMode.Isometric);
+
+        Check.That("the isometric view survives a first-person round trip",
+            Math.Abs(toggleCam.Zoom - zoomBefore) < 0.001f &&
+            Math.Abs(toggleCam.TiltDegrees - tiltBefore) < 0.001f,
+            $"zoom {zoomBefore:F2}->{toggleCam.Zoom:F2}, tilt {tiltBefore:F1}->{toggleCam.TiltDegrees:F1}");
+
+        // The focus-point clamp must keep a wall-hugging player's view on the
+        // floor plan (ClampFocusPointToMap is the public seam for this).
+        var clampCam = new Camera(aspect, StoreLayouts.Standard.Width * cellSize,
+            StoreLayouts.Standard.Height * cellSize, cellSize);
+        var wallSide = new Vector3(-500f, 3f, 500f); // far outside the store
+        var clamped = clampCam.ClampFocusPointToMap(wallSide);
+        float clampMin = -cellSize * 0.5f;
+        float clampMaxW = StoreLayouts.Standard.Width * cellSize - cellSize * 0.5f;
+        float clampMaxH = StoreLayouts.Standard.Height * cellSize - cellSize * 0.5f;
+        Check.That("the focus point clamps inside the floor plan",
+            clamped.X >= clampMin && clamped.X <= clampMaxW &&
+            clamped.Z >= clampMin && clamped.Z <= clampMaxH,
+            $"clamped to ({clamped.X:F1}, {clamped.Z:F1})");
     }
 
     private static GameTime Frame() =>

@@ -23,14 +23,23 @@ public class GamePadInput : IInputSource
     private const float LookRate = 600f; // look units/sec at full stick
 
     private readonly PlayerIndex _playerIndex;
+    private readonly InputMapper _map;
     private bool _previousToggle;
     private bool _previousThrow;
     private bool _previousUse;
     private bool _previousStart;
 
-    /// <summary>Creates a gamepad input source for the given controller slot.</summary>
+    /// <summary>Creates a gamepad input source for the given controller slot
+    /// with the default bindings.</summary>
     public GamePadInput(PlayerIndex playerIndex = PlayerIndex.One)
+        : this(InputMapper.Default, playerIndex)
     {
+    }
+
+    /// <summary>Creates a gamepad input source with the given bindings.</summary>
+    public GamePadInput(InputMapper map, PlayerIndex playerIndex = PlayerIndex.One)
+    {
+        _map = map;
         _playerIndex = playerIndex;
     }
 
@@ -64,17 +73,17 @@ public class GamePadInput : IInputSource
         Vector2 look = pan * dt * LookRate;
 
         // Y flips between isometric and first-person; rising edge only.
-        bool toggleNow = gp.Buttons.Y == ButtonState.Pressed;
+        bool toggleNow = gp.IsButtonDown(_map.ToggleCameraPad);
         bool toggle = toggleNow && !_previousToggle;
         _previousToggle = toggleNow;
 
         // X throws the ball; rising edge, same as the keyboard's click.
-        bool throwNow = gp.Buttons.X == ButtonState.Pressed;
+        bool throwNow = gp.IsButtonDown(_map.ThrowPad);
         bool throwPressed = throwNow && !_previousThrow;
         _previousThrow = throwNow;
 
         // B uses the pocketed power-up. Rising edge like X and Y.
-        bool useNow = gp.Buttons.B == ButtonState.Pressed;
+        bool useNow = gp.IsButtonDown(_map.UsePad);
         bool usePressed = useNow && !_previousUse;
         _previousUse = useNow;
 
@@ -82,7 +91,7 @@ public class GamePadInput : IInputSource
         // press is one action, and both fields are set because the two phases
         // read different ones (Title reads Start/Restart, the between-rounds
         // shop reads Restart). Without this the pad could not leave the title.
-        bool startNow = gp.Buttons.Start == ButtonState.Pressed;
+        bool startNow = gp.IsButtonDown(_map.StartPad);
         bool startPressed = startNow && !_previousStart;
         _previousStart = startNow;
 
@@ -98,7 +107,7 @@ public class GamePadInput : IInputSource
             ToggleCamera = toggle,
             Start = startPressed,
             Restart = startPressed,
-            Exit = gp.Buttons.Back == ButtonState.Pressed,
+            Exit = gp.IsButtonDown(_map.ExitPad),
             Throw = throwPressed,
             Use = usePressed,
         };

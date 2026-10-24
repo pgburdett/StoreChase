@@ -469,7 +469,7 @@ playerWorldPos, playerFacing)`.
 
 ### First-person (V / gamepad Y)
 
-`CameraViewMode.FirstPerson` seats a 60° perspective camera at the player's
+`CameraMode.FirstPerson` seats a 60° perspective camera at the player's
 head (`FirstPersonEyeHeight` = 2.2, the PersonMesh head center) and drives it
 with mouse-look:
 

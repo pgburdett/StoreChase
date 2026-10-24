@@ -838,7 +838,7 @@ namespace StoreChase
             // Pointer capture follows the camera mode. Set it before polling so
             // KeyboardMouseInput knows whether to report a relative look delta.
             // (One frame of lag after a toggle is harmless.)
-            bool firstPerson = _camera.Mode == CameraViewMode.FirstPerson;
+            bool firstPerson = _camera.Mode == CameraMode.FirstPerson;
             _input.MouseLookEnabled = firstPerson;
             _input.MouseLookCenter = new Point(
                 GraphicsDevice.Viewport.Width / 2, GraphicsDevice.Viewport.Height / 2);
@@ -967,7 +967,7 @@ namespace StoreChase
 
             // Isometric walks the grid cell to cell; first-person moves the
             // player freely (camera-relative) with wall sliding.
-            bool freeMove = _camera.Mode == CameraViewMode.FirstPerson;
+            bool freeMove = _camera.Mode == CameraMode.FirstPerson;
             Vector2 moveDir;
             if (_attractMode)
             {
@@ -1600,7 +1600,7 @@ namespace StoreChase
             // on screen", which is now a meaningful question: the viewport is
             // a window onto a store that may be bigger than the screen, so a
             // cat across the store is genuinely out of sight.
-            float eyeHeight = _camera.Mode == CameraViewMode.FirstPerson
+            float eyeHeight = _camera.Mode == CameraMode.FirstPerson
                 ? Camera.FirstPersonEyeHeight
                 : 1f;
             critter.BeingWatched =
@@ -2097,7 +2097,7 @@ namespace StoreChase
         /// </summary>
         private void DrawCustomers(GameTime gameTime)
         {
-            if (_camera.Mode == CameraViewMode.FirstPerson) return;
+            if (_camera.Mode == CameraMode.FirstPerson) return;
 
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
             if (_customers.Any(c => c.IsMoving)) _customerWalkPhase += dt * WalkCycleSpeed;
@@ -2279,7 +2279,7 @@ namespace StoreChase
         {
             // The first-person camera sits inside the player's head, so skip
             // the player's own body (it would only clip through the view).
-            if (_camera.Mode == CameraViewMode.FirstPerson) return;
+            if (_camera.Mode == CameraMode.FirstPerson) return;
 
             float dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
 

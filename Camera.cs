@@ -7,12 +7,6 @@ namespace StoreChase
     // Which camera the game is currently driving. Isometric is the default
     // top-down/pan/tilt/zoom view; FirstPerson is a mouse-look camera seated
     // at the player's head, with movement made camera-relative.
-    public enum CameraViewMode
-    {
-        Isometric,
-        FirstPerson,
-    }
-
     public enum CameraMode
     {
         Isometric,
@@ -42,7 +36,7 @@ namespace StoreChase
         public Matrix ViewProjection => View * Projection;
 
         /// <summary>The current camera mode.</summary>
-        public CameraViewMode Mode { get; private set; } = CameraViewMode.Isometric;
+        public CameraMode Mode { get; private set; } = CameraMode.Isometric;
 
         /// <summary>
         /// The world point the camera is centred on, in the isometric view.
@@ -178,7 +172,7 @@ namespace StoreChase
             if (float.TryParse(Environment.GetEnvironmentVariable("SC_TILT"), out float forcedTilt))
                 TiltDegrees = MathHelper.Clamp(forcedTilt, 0f, MaxTiltDegrees);
             if (Environment.GetEnvironmentVariable("SC_FP") == "1")
-                Mode = CameraViewMode.FirstPerson;
+                Mode = CameraMode.FirstPerson;
 
             UpdateCameraMatrices();
         }
@@ -338,21 +332,21 @@ namespace StoreChase
 
             if (input.ToggleCamera)
             {
-                Mode = Mode == CameraViewMode.Isometric
-                    ? CameraViewMode.FirstPerson
-                    : CameraViewMode.Isometric;
+                Mode = Mode == CameraMode.Isometric
+                    ? CameraMode.FirstPerson
+                    : CameraMode.Isometric;
 
                 // Entering FPS: start level, looking the way the player faces.
                 // Iso pan/zoom/tilt are left untouched so toggling back restores
                 // the exact previous view.
-                if (Mode == CameraViewMode.FirstPerson)
+                if (Mode == CameraMode.FirstPerson)
                 {
                     _fpYaw = playerFacing;
                     _fpPitch = 0f;
                 }
             }
 
-            if (Mode == CameraViewMode.FirstPerson)
+            if (Mode == CameraMode.FirstPerson)
             {
                 UpdateFirstPerson(input, playerWorldPos);
                 return;
@@ -446,7 +440,7 @@ namespace StoreChase
         /// </summary>
         public bool IsInViewCone(Vector3 eye, Vector3 target)
         {
-            if (Mode == CameraViewMode.FirstPerson)
+            if (Mode == CameraMode.FirstPerson)
             {
                 Vector3 to = target - eye;
 
@@ -520,7 +514,7 @@ namespace StoreChase
         {
             get
             {
-                if (Mode == CameraViewMode.FirstPerson)
+                if (Mode == CameraMode.FirstPerson)
                 {
                     float cosPitch = (float)Math.Cos(_fpPitch);
                     return new Vector3(
