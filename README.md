@@ -172,8 +172,17 @@ particles, floating texts, hit-stop, and camera shake are all pure state that
 A run is a sequence of stores (see `Campaign.cs`, all headless):
 
 - **rounds escalate** — loot grows by one every two rounds (capped at 8),
-  cats every three (capped at 5), and the floor plan cycles through four
+  cats every three (capped at 5), and the floor plan cycles through six
   stores, ending on the biggest
+- **every fourth round has a boss** — a bigger Moggy that survives a tackle
+  (dropping its goods, taking a stun, and showing its remaining health on the
+  HUD) until the third hit. `Critter.MakeBoss` owns the arithmetic
+- **each round has a shopping order** — a bonus for securing the kinds the
+  store asked for, paid once when the list is complete (see `ShoppingOrder.cs`)
+- **the run survives a restart** — `CampaignState.Save`/`Load` writes the
+  purse, round index, upgrades and queued consumables to a versioned JSON file,
+  and the game resumes from it. A file from another version is refused rather
+  than misread; N on the title screen starts fresh
 - **you bank coins** — every secured item is worth its alarm weight × 10 (a
   tin 7c, a bag 10c, a carton 15c), plus a 25c bonus for clearing a store.
   The purse survives losses: a loss costs you the round, not the run
@@ -208,6 +217,10 @@ Keyboard / mouse:
 - E: use — the pocketed power-up, or pull the fire alarm if you're standing
   on one (the alarm wins that priority; it's the bigger button)
 - 1–9: buy from the shop, between rounds
+- P: pause (O opens the options screen — volumes and key rebindings)
+- T: on the title screen, toggle Time Attack
+- L: on the title screen, play a custom store (`custom_store.txt`)
+- N: on the title screen, abandon a resumed run and start a new one
 - Escape: quit
 - R: between rounds — next store on a win, retry on a loss
 
@@ -220,9 +233,10 @@ Gamepad:
 - X: throw the ball
 - B: use the pocketed power-up (or pull the fire alarm)
 - Start: restart / next round
+- Left stick click: pause
 - Back: quit
 
-The shop is currently keyboard-only (six items, six number keys); a gamepad
+The shop is currently keyboard-only (nine items, nine number keys); a gamepad
 player can play the whole run but not spend the purse.
 
 ## Architecture at a glance
@@ -255,8 +269,16 @@ player can play the whole run but not spend the purse.
 - `Hazards.cs` — spills and fire alarms, and the per-frame hazard state the
   player and cats react to.
 - `Campaign.cs` — the run between rounds: coin values, the shop catalog and
-  buy rules (`ShopCatalog` / `CampaignState`), and the escalating round specs
-  (`CampaignRounds.SpecFor`). Entirely headless.
+  buy rules (`ShopCatalog` / `CampaignState`), the escalating round specs
+  (`CampaignRounds.SpecFor`), and the versioned save file that lets a run
+  survive a restart (refused rather than misread if the version disagrees).
+  Entirely headless.
+- `ShoppingOrder.cs` — the round's bonus shopping list (what it asks for, what
+  paying it out means) and the HUD line, so both are testable without playing.
+- `CustomStore.cs` — a hand-authored floor plan from `custom_store.txt`, and
+  the validation the generator gives the authored stores for free (walkable
+  start, reachable counter, no floor walled off from it). Rejections carry a
+  reason and are printed, never swallowed.
 - `FxSystem.cs` — the juice layer: particles, floating texts, and hit-stop
   state, all pure data that `Hud` renders.
 - `Music.cs` — the adaptive soundtrack (see Sound below).
@@ -645,9 +667,12 @@ device APIs:
 
 - `InputState.cs` — a per-frame, device-agnostic snapshot: `Move`, `CameraPan`,
   `Tilt`, `Zoom`, `Look`, `ToggleCamera`, `Throw`, `Use`, `BuySlot`, `Restart`,
-  `Exit`, plus `HasActivity`. `Use` and `BuySlot` are rising edges (so are
-  `ToggleCamera` and `Throw`); `BuySlot` is 1-based, 0 for none — safe as a
-  default because a struct default is zero.
+  `Pause`, `Exit`, `LastKeyPressed`, plus `HasActivity`. `Use` and `BuySlot` are
+  rising edges (so are `ToggleCamera`, `Throw` and `Pause`); `BuySlot` is
+  1-based, 0 for none — safe as a default because a struct default is zero.
+  `LastKeyPressed` is raw keyboard for UIs that need to capture a *key* (the
+  rebind screen), ordered so two keys pressed on the same frame report the same
+  one every time.
 - `IInputSource.cs` — one physical device. `InputDeviceKind` (`KeyboardMouse`,
   `GamePad`) tells the rest of the game what the player is using. The optional
   `IMouseLookSource` capability (`MouseLookEnabled`/`MouseLookCenter`) lets a
@@ -657,7 +682,7 @@ device APIs:
 - `KeyboardMouseInput.cs` / `GamePadInput.cs` — the **only** files allowed to
   call `Keyboard`/`Mouse`/`GamePad`. Both turn the toggle button (V / Y), the
   throw button (click / X) and the use button (E / B) into rising edges so
-  holding doesn't repeat. The keyboard source additionally edge-detects D1–D6
+  holding doesn't repeat. The keyboard source additionally edge-detects D1–D9
   into `BuySlot` (the gamepad leaves it 0 — the shop is keyboard-only).
 - `InputSystem.cs` — polls every source each frame (so per-device deltas like
   the mouse wheel stay current) and exposes the active device's state as

@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 
 namespace StoreChase;
 
@@ -112,13 +115,15 @@ public sealed record RoundSpec(StoreLayout Layout, int LootCount, int CritterCou
 /// <summary>The campaign's escalating floor plans and workloads.</summary>
 public static class CampaignRounds
 {
-    // The route through the run: the two hand-made stores, then two bigger
-    // generated ones you settle into — after round 4 the store stops
+    // The route through the run: the hand-made stores, then four bigger
+    // generated ones you settle into — after the last store the store stops
     // changing and only the workload grows (loot to 8, cats to 5).
     private static readonly StoreLayout[] Layouts =
     {
         StoreLayouts.Standard,
         StoreLayouts.BigBox,
+        StoreLayouts.CornerStore,
+        StoreLayouts.Midtown,
         StoreLayouts.Generate("Cross-Town Market", 30, 20, seed: 20261015),
         StoreLayouts.Generate("The Warehouse", 34, 22, seed: 20261016),
     };
@@ -161,12 +166,20 @@ public sealed class CampaignState
     /// <summary>Bonus for clearing a store.</summary>
     public const int WinBonus = 25;
 
-    /// <summary>0-based index of the round being played.</summary>
-    public int RoundIndex { get; private set; }
+    /// <summary>
+    /// Shape of the save file. Bump it when the persisted fields change
+    /// meaning, so an old file is refused rather than misread.
+    /// </summary>
+    public const int SaveVersion = 1;
 
-    public int Coins { get; private set; }
-    public int Wins { get; private set; }
-    public int Losses { get; private set; }
+    /// <summary>0-based index of the round being played.</summary>
+    /// <remarks>Internal set: restoring a saved run writes these, gameplay
+    /// reads them. No reflection, no public setter.</remarks>
+    public int RoundIndex { get; internal set; }
+
+    public int Coins { get; internal set; }
+    public int Wins { get; internal set; }
+    public int Losses { get; internal set; }
 
     private readonly Dictionary<ShopItemId, int> _tiers = new();
     private readonly List<ShopItemId> _queue = new();
@@ -270,5 +283,70 @@ public sealed class CampaignState
                 item.Consumable, CanAfford: Coins >= cost));
         }
         return options;
+    }
+
+    /// <summary>Persists the run to a JSON file so it can be resumed later.</summary>
+    public void Save(string path)
+    {
+        var data = new SaveData
+        {
+            Version = SaveVersion,
+            RoundIndex = RoundIndex,
+            Coins = Coins,
+            Wins = Wins,
+            Losses = Losses,
+            Tiers = _tiers.ToDictionary(kv => (int)kv.Key, kv => kv.Value),
+            Queue = _queue.Select(q => (int)q).ToList(),
+        };
+        var json = JsonSerializer.Serialize(data);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, json);
+    }
+
+    /// <summary>
+    /// Loads a run from a JSON file, or returns null if it can't be read.
+    ///
+    /// A file written by a different <see cref="SaveVersion"/> is treated as
+    /// unreadable rather than guessed at: a run whose round index or purse no
+    /// longer mean what they meant is worse than a fresh one, and the caller
+    /// can say so instead of silently restarting.
+    /// </summary>
+    public static CampaignState? Load(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            var data = JsonSerializer.Deserialize<SaveData>(File.ReadAllText(path));
+            if (data == null || data.Version != SaveVersion) return null;
+            return FromSave(data);
+        }
+        catch { return null; }
+    }
+
+    private static CampaignState FromSave(SaveData data)
+    {
+        var state = new CampaignState();
+        state.RoundIndex = Math.Max(0, data.RoundIndex);
+        state.Coins = Math.Max(0, data.Coins);
+        state.Wins = Math.Max(0, data.Wins);
+        state.Losses = Math.Max(0, data.Losses);
+        foreach (var kv in data.Tiers ?? new Dictionary<int, int>())
+            if (Enum.IsDefined(typeof(ShopItemId), kv.Key))
+                state._tiers[(ShopItemId)kv.Key] = Math.Max(0, kv.Value);
+        foreach (var q in data.Queue ?? new List<int>())
+            if (Enum.IsDefined(typeof(ShopItemId), q))
+                state._queue.Add((ShopItemId)q);
+        return state;
+    }
+
+    private sealed class SaveData
+    {
+        public int Version { get; set; }
+        public int RoundIndex { get; set; }
+        public int Coins { get; set; }
+        public int Wins { get; set; }
+        public int Losses { get; set; }
+        public Dictionary<int, int>? Tiers { get; set; } = new();
+        public List<int>? Queue { get; set; } = new();
     }
 }

@@ -189,6 +189,18 @@ public static class Music
     /// <summary>True when the device side came up (false = silent, by design).</summary>
     public static bool Available => _instance != null;
 
+    private static float _volume = 1f;
+    /// <summary>Master volume for the music track, 0..1.</summary>
+    public static float Volume
+    {
+        get => _volume;
+        set
+        {
+            _volume = MathHelper.Clamp(value, 0f, 1f);
+            if (_instance != null) _instance.Volume = _volume;
+        }
+    }
+
     /// <summary>
     /// Starts the soundtrack. Safe to call on a machine with no audio: it
     /// silently stays unavailable, exactly like Sfx.
@@ -206,6 +218,7 @@ public static class Music
             for (int i = 0; i < KeepBuffers; i++)
                 _instance.SubmitBuffer(RenderChunk());
 
+            _instance.Volume = _volume;
             _instance.Play();
         }
         catch

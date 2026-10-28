@@ -63,7 +63,35 @@ public readonly record struct HudState(
     float Noise,
 
     /// <summary>Current securing combo (1 = none). Only drawn while playing.</summary>
-    int Combo);
+    int Combo,
+
+    /// <summary>Whether this round is a Time Attack round.</summary>
+    bool TimeAttack = false,
+
+    /// <summary>Seconds left in Time Attack (0 when not active).</summary>
+    float TimeLeft = 0f,
+
+    /// <summary>Shopping-order progress text, or empty when there is no order.</summary>
+    string OrderText = "",
+
+    /// <summary>True once the round's shopping order has been fulfilled.</summary>
+    bool OrderComplete = false,
+
+    /// <summary>Time Attack mode selected on the title screen.</summary>
+    bool TimeAttackMode = false,
+
+    /// <summary>Whether a custom_store.txt was found and can be played.</summary>
+    bool CustomStoreAvailable = false,
+
+    /// <summary>Whether the game is currently paused.</summary>
+    bool Paused = false,
+
+    /// <summary>Options overlay text (multi-line), or empty.</summary>
+    string OptionsText = "",
+
+    /// <summary>True while the run came from a save file, so the title screen
+    /// can offer a way to abandon it.</summary>
+    bool RunResumed = false);
 
 // The screen-space overlay: the objective readout, the alarm meter, the
 // control hint, the off-screen thief marker and the end-of-round banner.
@@ -87,6 +115,10 @@ public sealed class Hud
     // the campaign moves the game to a different store.
     private Texture2D _minimap;
     private readonly int _minimapCellPixels;
+
+    // The event feed's line height, mirrored from MessageFeed (which owns the
+    // value). The HUD needs it to keep the feed's anchor on a short screen.
+    private const float FeedLineHeight = 20f;
 
     /// <summary>Creates a new HUD with the given graphics resources.</summary>
     /// <param name="spriteBatch">The batch to draw with.</param>
@@ -127,8 +159,11 @@ public sealed class Hud
         texture.SetData(MinimapPixels(layout));
 
         // Big enough to read the aisles at a glance, small enough to sit in a
-        // corner. Four pixels a cell is about the floor of what is legible.
-        const int cellPixels = 4;
+        // corner. Eighteen pixels a cell keeps the plan legible on a
+        // 1600x1200 screen without eating the corner; the event feed is
+        // positioned (and clamped) against this, since a bigger minimap
+        // pushes the feed down.
+        const int cellPixels = 18;
         return (texture, cellPixels);
     }
 
@@ -215,9 +250,20 @@ public sealed class Hud
         DrawEndBanner(state);
 
         // The event feed: newest at the bottom, older ones scroll up and off.
-        // It sits below the minimap so the two do not overlap.
+        // It sits below the minimap so the two do not overlap — clamped to the
+        // viewport, because the minimap scaled up (18px a cell) and on a short
+        // screen that put the feed's anchor below the bottom edge. The feed
+        // draws itself *upward* from that anchor, so it stays on screen (the
+        // minimap overlaps its tail rather than the feed falling off).
+        float feedTop = 40 + state.Layout.Height * _minimapCellPixels + 20;
+        feedTop = MathF.Min(feedTop, _graphicsDevice.Viewport.Height - FeedLineHeight - 8);
         _feed.Draw(_spriteBatch, _font,
-            new Vector2(_graphicsDevice.Viewport.Width - 220, 40 + state.Layout.Height * _minimapCellPixels + 20));
+            new Vector2(_graphicsDevice.Viewport.Width - 220, feedTop));
+
+        if (state.Paused && !string.IsNullOrEmpty(state.OptionsText))
+        {
+            DrawPausedOverlay(state);
+        }
 
         _spriteBatch.End();
 
@@ -342,6 +388,35 @@ public sealed class Hud
         var promptColour = Color.Lerp(ArcadePalette.Yellow, ArcadePalette.White, blink);
         DrawScaledText(prompt, cx - promptSize.X / 2 + 2 * s, promptTop + 2 * s, promptScale, ArcadePalette.Black);
         DrawScaledText(prompt, cx - promptSize.X / 2, promptTop, promptScale, promptColour);
+
+        // Mode/availability notes stacked under the prompt. A cursor rather
+        // than fixed offsets, so adding a line cannot overlap the one below.
+        float noteY = promptTop + promptSize.Y + 8f * s;
+
+        string modeLine = state.TimeAttackMode ? "TIME ATTACK: ON  (press T to toggle)"
+                                                : "TIME ATTACK: OFF (press T to toggle)";
+        DrawScaledText(modeLine, cx - _font.MeasureString(modeLine).X * 0.9f * s / 2f,
+            noteY, 0.9f * s,
+            state.TimeAttackMode ? new Color(255, 150, 90) : Color.LightGray);
+        noteY += 16f * s;
+
+        // A run loaded from a save file resumes automatically; say so, and say
+        // how to get rid of it, or the player is locked into a purse they may
+        // rather forget.
+        if (state.RunResumed)
+        {
+            const string resumeLine = "SAVED RUN RESUMED - press N for a new run";
+            DrawScaledText(resumeLine, cx - _font.MeasureString(resumeLine).X * 0.9f * s / 2f,
+                noteY, 0.9f * s, new Color(255, 220, 130));
+            noteY += 16f * s;
+        }
+
+        if (state.CustomStoreAvailable)
+        {
+            const string customLine = "CUSTOM STORE FOUND - press L to play";
+            DrawScaledText(customLine, cx - _font.MeasureString(customLine).X * 0.9f * s / 2f,
+                noteY, 0.9f * s, new Color(150, 220, 160));
+        }
 
         DrawControlsPanel(hints, cx, panelBottom, s);
 
@@ -534,6 +609,37 @@ public sealed class Hud
         _spriteBatch.DrawString(_font!, text, new Vector2(x, y), colour,
             0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
 
+    private void DrawPausedOverlay(in HudState state)
+    {
+        var font = _font!;
+        var vp = _graphicsDevice.Viewport;
+        var lines = state.OptionsText.Split('\n');
+
+        // Measure the block so the backdrop fits the text.
+        float maxW = 0f;
+        foreach (var l in lines) maxW = MathF.Max(maxW, font.MeasureString(l).X);
+        float lineH = font.LineSpacing + 4f;
+        float boxW = maxW + 48f;
+        float boxH = lines.Length * lineH + 32f;
+        float boxX = (vp.Width - boxW) / 2f;
+        float boxY = (vp.Height - boxH) / 2f;
+
+        // Backdrop.
+        _spriteBatch.Draw(_uiPixel, new Rectangle((int)boxX, (int)boxY, (int)boxW, (int)boxH),
+            new Color(12, 12, 18, 220));
+        // Border.
+        _spriteBatch.Draw(_uiPixel, new Rectangle((int)boxX, (int)boxY, (int)boxW, 2), new Color(245, 205, 110));
+        _spriteBatch.Draw(_uiPixel, new Rectangle((int)boxX, (int)(boxY + boxH - 2), (int)boxW, 2), new Color(245, 205, 110));
+
+        float y = boxY + 16f;
+        foreach (var line in lines)
+        {
+            float x = boxX + (boxW - font.MeasureString(line).X) / 2f;
+            _spriteBatch.DrawString(font, line, new Vector2(x, y), Color.White);
+            y += lineH;
+        }
+    }
+
     // The objective readout: how much is back, how much is still out, and
     // the timer. This is the whole scoreboard, so it stays in one place.
     private void DrawObjectivePanel(in HudState state)
@@ -552,9 +658,34 @@ public sealed class Hud
         line.Y += step;
         _spriteBatch.DrawString(font, $"Time  {state.ElapsedTime:F1}s", line, Color.White);
         line.Y += step;
+        if (state.TimeAttack)
+        {
+            _spriteBatch.DrawString(font, $"Time left  {state.TimeLeft:F1}s", line,
+                state.TimeLeft < 10f ? Color.OrangeRed : Color.White);
+            line.Y += step;
+        }
         _spriteBatch.DrawString(font, $"Behind the counter  {secured}/{total}",
             line, secured == total ? Color.LimeGreen : Color.White);
         line.Y += step;
+
+        if (!string.IsNullOrEmpty(state.OrderText))
+        {
+            _spriteBatch.DrawString(font, state.OrderText, line,
+                state.OrderComplete ? new Color(120, 230, 160) : new Color(200, 220, 240));
+            line.Y += step;
+        }
+
+        // Boss bar: the one critter that takes more than one tackle, so the
+        // player can tell a fight from a one-hit catch before swinging.
+        var boss = state.Critters.FirstOrDefault(c => c.IsBoss);
+        if (boss != null)
+        {
+            int filled = Math.Clamp(boss.Health, 0, boss.MaxHealth);
+            string pips = new string('#', filled) + new string('-', Math.Max(0, boss.MaxHealth - filled));
+            _spriteBatch.DrawString(font, $"{boss.Name}  {pips}  {boss.Health}/{boss.MaxHealth}", line,
+                new Color(255, 130, 110));
+            line.Y += step;
+        }
 
         if (state.PlayerCarrying)
         {
@@ -887,8 +1018,10 @@ public sealed class Hud
             new Vector2((w - _font.MeasureString(state.EndMessage).X) / 2f, h / 2f - 8), Color.White);
         _spriteBatch.DrawString(_font!, $"Recovered {state.SecuredCount}/{state.TotalCount} in {state.ElapsedTime:F1}s",
             new Vector2((w - _font.MeasureString("Recovered").X) / 2f, h / 2f + 16), Color.LightGray);
+        _spriteBatch.DrawString(_font!, $"Coins: {state.Coins}   Round {state.RoundNumber}",
+            new Vector2((w - _font.MeasureString("Coins").X) / 2f, h / 2f + 36), new Color(245, 205, 110));
         _spriteBatch.DrawString(_font!, state.RestartHint,
-            new Vector2((w - _font.MeasureString(state.RestartHint).X) / 2f, h / 2f + 44),
+            new Vector2((w - _font.MeasureString(state.RestartHint).X) / 2f, h / 2f + 60),
             new Color(255, 220, 130));
 
         DrawShopPanel(state, h);

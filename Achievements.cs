@@ -33,6 +33,15 @@ public sealed class AchievementTracker
     public IReadOnlyCollection<string> Unlocked => _unlocked;
     public IReadOnlyList<float> FastestWins => _fastest;
 
+    /// <summary>All achievement ids the game can award.</summary>
+    public static IReadOnlyList<string> AllIds { get; } = new[] { "befriend_one", "first_win", "win" };
+
+    /// <summary>Total number of achievements available.</summary>
+    public int Total => AllIds.Count;
+
+    /// <summary>Fastest winning time, or MaxValue if none.</summary>
+    public float FastestWin => _fastest.Count > 0 ? _fastest[0] : float.MaxValue;
+
     public bool IsUnlocked(string id) => _unlocked.Contains(id);
 
     public void TryUnlock(string id)

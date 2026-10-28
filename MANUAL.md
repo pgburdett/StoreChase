@@ -181,6 +181,14 @@ Keyboard / mouse:
 - E: use — the pocketed power-up, or pull the fire alarm if you're standing
   on one (the alarm wins that priority; it's the bigger button)
 - 1–9: buy from the shop, between rounds
+- P: pause (the round freezes; the camera holds still, and O opens the
+  options screen from there)
+- T: on the title screen, toggle Time Attack — clear the store before the
+  clock runs out instead of before the alarm does
+- L: on the title screen, play a custom store, if `custom_store.txt` is
+  present (see Custom stores below)
+- N: on the title screen while a saved run is resumed, throw it away and
+  start a new one
 - Escape: quit
 - R: between rounds — next store on a win, retry on a loss
 
@@ -193,10 +201,50 @@ Gamepad:
 - X: throw the ball
 - B: use the pocketed power-up (or pull the fire alarm)
 - Start: restart / next round
+- Left stick click: pause
 - Back: quit
 
-The shop is currently keyboard-only (six items, six number keys); a gamepad
-player can play the whole run but not spend the purse.
+The shop is keyboard-only (nine items, nine number keys); a gamepad player
+can play the whole run but not spend the purse.
+
+## Options
+
+Press **P** to pause, then **O**. Two volume sliders (music and effects, left/
+right to adjust) and every keyboard binding, with **Enter** to rebind and the
+next key you press becomes the binding. Escape cancels a rebind instead of
+binding itself, and a key that is already doing something else is refused with
+a reason. Rebinds are saved to the app-data folder and come back next launch.
+
+## Custom stores
+
+Put a `custom_store.txt` next to the game and the title screen will offer it
+with **L**. The format is a small header, a `---` line, then the floor plan —
+`0` is floor, `1` is a shelf or wall, every row the same length:
+
+```
+Name: My Corner Shop
+counterRow: 1
+counterStart: 6
+counterEnd: 9
+playerStart: 4,1
+---
+1111111111111111
+1000000000000001
+1011101110111001
+1011101110110111
+1000000000000001
+1111111111111111
+```
+
+`counterRow`/`counterStart`/`counterEnd` say where the till runs (inclusive of
+the last column), and `playerStart` is `x,y` counting from the top-left. The
+file is checked before it is offered: the player has to start on the floor, the
+counter has to be reachable, and no patch of floor may be walled off from the
+start. If it is rejected the reason is printed to the console — every row the
+same length, and only `0` and `1` in them, covers nearly every case.
+
+A custom store is a one-off round: win or lose it and the campaign carries on
+from where it was.
 
 ## Tips
 

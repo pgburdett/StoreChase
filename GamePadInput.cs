@@ -17,6 +17,7 @@ namespace StoreChase;
 //   B                    -> use the pocketed power-up
 //   Start                -> start the game / restart
 //   Back                 -> exit
+//   Left stick click     -> pause
 public class GamePadInput : IInputSource
 {
     private const float StickDeadzone = 0.5f;
@@ -28,6 +29,7 @@ public class GamePadInput : IInputSource
     private bool _previousThrow;
     private bool _previousUse;
     private bool _previousStart;
+    private bool _previousPause;
 
     /// <summary>Creates a gamepad input source for the given controller slot
     /// with the default bindings.</summary>
@@ -95,6 +97,11 @@ public class GamePadInput : IInputSource
         bool startPressed = startNow && !_previousStart;
         _previousStart = startNow;
 
+        // Pause is a rising edge, like the keyboard's P.
+        bool pauseNow = gp.IsButtonDown(_map.PausePad);
+        bool pausePressed = pauseNow && !_previousPause;
+        _previousPause = pauseNow;
+
         return new InputState
         {
             Move = move,
@@ -107,6 +114,7 @@ public class GamePadInput : IInputSource
             ToggleCamera = toggle,
             Start = startPressed,
             Restart = startPressed,
+            Pause = pausePressed,
             Exit = gp.IsButtonDown(_map.ExitPad),
             Throw = throwPressed,
             Use = usePressed,

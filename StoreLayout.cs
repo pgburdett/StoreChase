@@ -202,8 +202,40 @@ public static class StoreLayouts
     /// </remarks>
     public static StoreLayout BigBox { get; } = Generate("Big Box", 26, 18, seed: 20260930);
 
+    /// <summary>
+    /// A tighter, more intimate store: 16x11 with narrow aisles and a
+    /// single open corridor running the length of the shop. Reads as a
+    /// corner shop rather than a superstore.
+    /// </summary>
+    public static StoreLayout CornerStore { get; } = new(
+        "Corner Store",
+        new[]
+        {
+            "1111111111111111",
+            "1000000000000001",
+            "1011101110111001",
+            "1011101110111001",
+            "1000000000000001",
+            "1011101110111001",
+            "1011101110111001",
+            "1000000000000001",
+            "1011101110111001",
+            "1011101110111001",
+            "1111111111111111",
+        },
+        counterRow: 1,
+        counterStart: 6,
+        counterEnd: 9,
+        playerStart: new GridPos(4, 1));
+
+    /// <summary>
+    /// A mid-sized store with wider aisles and two open cross-corridors,
+    /// generated from the same aisle lattice as Big Box.
+    /// </summary>
+    public static StoreLayout Midtown { get; } = Generate("Midtown", 24, 16, seed: 20261101);
+
     /// <summary>Every authored/generated layout, for a level picker.</summary>
-    public static IReadOnlyList<StoreLayout> All { get; } = new[] { Standard, BigBox };
+    public static IReadOnlyList<StoreLayout> All { get; } = new[] { Standard, BigBox, CornerStore, Midtown };
 
     /// <summary>The layout the alarm rates were tuned against.</summary>
     public const string ReferenceLayoutName = "Standard";

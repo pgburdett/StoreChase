@@ -28,6 +28,8 @@ public static class CampaignChecks
         CheckUpgradeFactors();
         CheckEscalation();
         CheckStorePath();
+        CheckSaveRoundTrip();
+        CheckCustomStoreParsing();
     }
 
     // A secured carton is worth more than a tin, on the same scale the
@@ -241,8 +243,106 @@ public static class CampaignChecks
                 $"{layout.AlarmScale(5, Player.GridSpeed)}");
         }
 
-        Check.That("the campaign's route is four distinct stores",
-            CampaignRounds.StorePath.Select(l => l.Name).Distinct().Count() == 4,
+        Check.That("the campaign's route is six distinct stores",
+            CampaignRounds.StorePath.Select(l => l.Name).Distinct().Count() == 6,
             string.Join(",", CampaignRounds.StorePath.Select(l => l.Name)));
+    }
+
+    // The save file is the run's memory across launches. It used to restore
+    // through reflection on private setters and carry no version, so a shape
+    // change would have loaded a silently wrong purse. It round-trips through
+    // a temp path now, and a foreign version is refused rather than guessed at.
+    private static void CheckSaveRoundTrip()
+    {
+        string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+            $"storechase-save-{Guid.NewGuid():N}.json");
+
+        var run = new CampaignState();
+        run.AddCoins(400);
+        run.TryBuy(ShopItemId.FastShoes);   // a permanent, so a tier is stored
+        run.TryBuy(ShopItemId.Spray);       // a consumable, so the queue is stored
+        run.Advance();
+        int coins = run.Coins, round = run.RoundIndex;
+
+        try
+        {
+            run.Save(path);
+            var loaded = CampaignState.Load(path);
+
+            Check.That("a save round-trips the purse and the round", loaded != null,
+                "load returned null");
+            if (loaded == null) return;
+
+            Check.That("the purse survives a save", loaded.Coins == coins, $"{loaded.Coins} vs {coins}");
+            Check.That("the round index survives a save", loaded.RoundIndex == round,
+                $"{loaded.RoundIndex} vs {round}");
+            Check.That("a bought permanent survives a save", loaded.Tier(ShopItemId.FastShoes) == 1,
+                $"tier {loaded.Tier(ShopItemId.FastShoes)}");
+            Check.That("a queued consumable survives a save", loaded.QueuedConsumables.Count == 1,
+                $"{loaded.QueuedConsumables.Count} queued");
+
+            // A file from a different save version must be refused, not
+            // reinterpreted. Poison the version and try again.
+            string json = System.IO.File.ReadAllText(path)
+                .Replace($"\"Version\":{CampaignState.SaveVersion}", "\"Version\":999");
+            System.IO.File.WriteAllText(path, json);
+            Check.That("a save from another version is refused",
+                CampaignState.Load(path) == null, "loaded anyway");
+
+            System.IO.File.WriteAllText(path, "{ this is not json");
+            Check.That("a corrupt save is refused", CampaignState.Load(path) == null, "loaded anyway");
+        }
+        finally
+        {
+            try { System.IO.File.Delete(path); } catch { /* temp file: best effort */ }
+        }
+    }
+
+    // A hand-authored store bypasses the generator's connectivity guarantee,
+    // so the parser has to be the thing that says no. Every rejection below
+    // is a store that would have started, then quietly stranded the player.
+    private static void CheckCustomStoreParsing()
+    {
+        var good =
+            "Name: Test Shop\n" +
+            "counterRow: 1\ncounterStart: 3\ncounterEnd: 5\nplayerStart: 2,2\n" +
+            "---\n" +
+            "111111111\n" +
+            "100000001\n" +
+            "100000001\n" +
+            "101000101\n" +
+            "100000001\n" +
+            "111111111\n";
+
+        var parsed = CustomStore.Parse(good, out string? error);
+        Check.That("a well-formed custom store parses", parsed != null, error ?? "");
+        if (parsed != null)
+            Check.That("its header values are read", parsed.CounterStart == 3 && parsed.CounterEnd == 5,
+                $"counter {parsed.CounterStart}..{parsed.CounterEnd}");
+
+        // The old parser's guess ("any line containing 0 or 1 is a grid row")
+        // turned a typo'd header into a ragged row and threw it away silently.
+        Check.That("an unrecognised header is explained, not swallowed",
+            CustomStore.Parse("Width: 9\n---\n111111111\n", out string? bad) == null && bad != null,
+            bad ?? "accepted");
+
+        Check.That("a missing separator is explained",
+            CustomStore.Parse("111111111\n", out string? noSep) == null && noSep != null,
+            noSep ?? "accepted");
+        Check.That("a ragged grid is explained",
+            CustomStore.Parse("---\n11111\n111\n", out string? ragged) == null && ragged != null,
+            ragged ?? "accepted");
+        Check.That("a stray character is explained",
+            CustomStore.Parse("---\n11111.\n", out string? charBad) == null && charBad != null,
+            charBad ?? "accepted");
+        Check.That("a player start inside a shelf is explained",
+            CustomStore.Parse("---\n1111\n1101\n1111\n", out string? inWall) == null && inWall != null,
+            inWall ?? "accepted");
+
+        // A sealed pocket: loot spawns on shelf edges, so floor the player
+        // cannot reach is an item nobody can secure.
+        Check.That("an unreachable pocket is explained",
+            CustomStore.Parse("---\n111111\n101101\n101101\n111111\n", out string? pocket) == null
+                && pocket != null, pocket ?? "accepted");
     }
 }

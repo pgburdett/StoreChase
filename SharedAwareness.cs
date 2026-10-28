@@ -32,6 +32,12 @@ public sealed class SharedAwareness
     public const float ShoutRadius = 8f;
 
     /// <summary>
+    /// How far a guard dog's bark carries. Louder than a normal cat's
+    /// shout, so a dog that spots you alerts the whole aisle block.
+    /// </summary>
+    public const float BarkRadius = 12f;
+
+    /// <summary>
     /// How much of the news survives the distance.
     ///
     /// Awareness is a distance in cells, so a distant sighting is a vaguer
@@ -112,14 +118,18 @@ public sealed class SharedAwareness
             {
                 if (who == cat) continue;
 
+                // A guard dog's bark carries further than a normal cat's
+                // shout, so its sighting reaches cats further down the aisles.
+                float radius = who.Profile.ChasesPlayer ? BarkRadius : ShoutRadius;
+
                 // How far the news has to travel, in cells.
                 float apart = ManhattanDistance(cat.Cell, who.Cell);
-                if (apart > ShoutRadius) continue;
+                if (apart > radius) continue;
 
                 // The further the news travels, the vaguer it gets. A cat
                 // that was nearly there gets a better fix than one across
                 // the store.
-                float carried = distance * (0.5f + 0.5f * (apart / ShoutRadius)) * Decay;
+                float carried = distance * (0.5f + 0.5f * (apart / radius)) * Decay;
                 if (carried < uncertainty)
                 {
                     uncertainty = carried;

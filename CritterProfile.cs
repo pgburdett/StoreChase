@@ -32,6 +32,10 @@ public enum CritterKind
     /// <summary>The fastest thing in the store. Low patience for thieving and
     /// high panic, so it grab-and-go rather than planning a heist.</summary>
     Mouser,
+
+    /// <summary>A store guard that hunts the player instead of the loot, and
+    /// barks to alert every cat within earshot.</summary>
+    GuardDog,
 }
 
 // Everything that makes one cat behave differently from another, in one
@@ -132,6 +136,13 @@ public sealed record CritterProfile
     /// Zero means "leaves it alone", which is the usual case.
     /// </summary>
     public required float UnpreferredThiefFactor { get; init; }
+
+    /// <summary>
+    /// This species hunts the player instead of the merchandise: it never
+    /// steals, never eats treats, and never befriends. Its sighting of the
+    /// player propagates further than a normal cat's (see SharedAwareness).
+    /// </summary>
+    public bool ChasesPlayer { get; init; } = false;
 
     /// <summary>
     /// How likely this species is to grab a loose item it happens to be
@@ -304,6 +315,29 @@ public sealed record CritterProfile
             IdlePose = CatPose.Stretch,
         },
 
+        CritterKind.GuardDog => new CritterProfile
+        {
+            Kind = kind,
+            Name = "Guard Dog",
+            MoveSpeed = 3.6f,
+            AlertRadius = 14,
+            FleeRadius = 0,
+            VisionRadius = 13,
+            HearingRadius = 8f,
+            ReplanInterval = 0.35f,
+            QuirkChance = 0.1f,
+            ThiefDrive = 0f,
+            FreezesWhenWatched = false,
+            IgnoresBall = false,
+            ChasesPlayer = true,
+            // Not a thief: nothing it wants from the shelves.
+            PreferredKind = LootKind.Canned,
+            UnpreferredThiefFactor = 0f,
+            Scale = 1.35f,
+            Tint = new Color(138, 92, 58),
+            IdlePose = CatPose.Stand,
+        },
+
         _ => new CritterProfile
         {
             Kind = CritterKind.Nervous,
@@ -338,6 +372,7 @@ public sealed record CritterProfile
         CritterKind.Burglar,
         CritterKind.Moggy,
         CritterKind.Mouser,
+        CritterKind.GuardDog,
     };
 
     /// <summary>Returns a random species profile.</summary>

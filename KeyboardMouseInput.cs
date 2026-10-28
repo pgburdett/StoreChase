@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -15,6 +16,8 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
     private bool _previousUse;
     private readonly bool[] _previousBuy;
     private bool _previousStart;
+    private bool _previousPause;
+    private KeyboardState _previousKb;
     private bool _mouseCaptured;
 
     /// <summary>Where the keys come from. Defaults to the shipping scheme
@@ -135,6 +138,22 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
         bool startPressed = startDown && !_previousStart;
         _previousStart = startDown;
 
+        bool pauseNow = kb.IsKeyDown(_map.Pause);
+        bool pausePressed = pauseNow && !_previousPause;
+        _previousPause = pauseNow;
+
+        // Raw key capture for UIs (rebinding). Only keys that just went
+        // down this frame count, so a held key isn't reported every frame.
+        // Ordered: GetPressedKeys() does not promise a stable order, and a
+        // frame with two new keys must report the same one every time or the
+        // rebind screen binds whatever the runtime happened to hand back.
+        Keys lastKey = Keys.None;
+        foreach (var k in kb.GetPressedKeys().OrderBy(k => (int)k))
+        {
+            if (!_previousKb.IsKeyDown(k)) { lastKey = k; break; }
+        }
+        _previousKb = kb;
+
         return new InputState
         {
             Move = move,
@@ -150,6 +169,8 @@ public class KeyboardMouseInput : IInputSource, IMouseLookSource
             Crouch = kb.IsKeyDown(_map.Crouch),
             BuySlot = buySlot,
             Start = startPressed,
+            Pause = pausePressed,
+            LastKeyPressed = lastKey,
         };
     }
 }

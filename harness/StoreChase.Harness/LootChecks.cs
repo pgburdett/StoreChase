@@ -36,6 +36,10 @@ public static class LootChecks
         foreach (var kind in CritterProfile.AllKinds)
         {
             var profile = CritterProfile.For(kind);
+            // A guard dog (and any other non-thief) has no merchandise drive
+            // at all, so the preferred/unpreferred distinction does not apply.
+            if (profile.ThiefDrive <= 0f) continue;
+
             float preferred = profile.ThiefDriveFor(profile.PreferredKind);
             float unwanted = profile.ThiefDriveFor(Other(profile.PreferredKind));
 

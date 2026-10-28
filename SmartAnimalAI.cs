@@ -120,6 +120,22 @@ public class SmartAnimalAI : ICritterAI
             return Flee(context);
         }
 
+        // 0b. A guard dog hunts the player, not the merchandise. It never
+        // steals (ThiefDrive is zero, so ShouldTakeLoot is false anyway) and
+        // never eats treats, but a thrown ball still distracts it.
+        if (_profile.ChasesPlayer)
+        {
+            if (context.Ball is { } ballCell && !_profile.IgnoresBall)
+            {
+                _currentPath.Clear();
+                State = AIState.Investigating;
+                return PathStepToward(context.Map, context.CurrentCell, ballCell);
+            }
+            State = AIState.Chasing;
+            WantsToSteal = false;
+            return PathStepToward(context.Map, context.CurrentCell, context.PlayerCell);
+        }
+
         // 1. Loot underfoot. Standing still is the move: the game picks it up.
         if (context.LootUnderfoot != null && !context.Carrying)
         {
@@ -160,6 +176,7 @@ public class SmartAnimalAI : ICritterAI
         // Standing on it means eating it — the game turns the snack into
         // friendship and consumes the treat (WantsTreat).
         if (context.Treat is { } treat && !context.Carrying &&
+            !_profile.ChasesPlayer &&
             ManhattanDistance(context.CurrentCell, treat) <= TreatRadius)
         {
             if (context.CurrentCell == treat)

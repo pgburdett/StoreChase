@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 
 namespace StoreChase
 {
@@ -65,6 +66,10 @@ namespace StoreChase
         // The objective: loot, the alarm that fills while it's missing, and the
         // ball you can throw to move a cat off whatever it's doing.
         private ItemField _items = null!;
+        // Per-round shopping order: kinds the player is asked to secure for a
+        // bonus. The rules (and the HUD line) live in ShoppingOrder, so the
+        // payout can be tested without playing a round.
+        private readonly ShoppingOrder _order = new();
         private AlarmSystem _alarm = null!;
         private Ball _ball = null!;
 
@@ -87,6 +92,8 @@ namespace StoreChase
         private float _dayPhase;
         private float _rainTimer;
         private float _rainActive;
+        private float _fogTimer;
+        private float _fogActive;
 
         // Floor spills and the one-shot fire alarm, plus where the player was
         // last frame (a spill triggers on *entering* its cell, not every
@@ -102,12 +109,13 @@ namespace StoreChase
         // The run: which store is next, the purse, and every upgrade bought
         // between rounds. Survives rounds — only StartRound reads it, so the
         // campaign itself stays headless (see Campaign.cs).
-        private readonly CampaignState _campaign = new();
+        private CampaignState _campaign = new();
 
         private BasicEffect _effect = null!;
         private Camera _camera = null!;
         private InputSystem _input = null!;
         private RainbowTitle _title = null!;
+        private AchievementTracker _achievements = null!;
 
         // The screen-space overlay. It owns no game state: Game1 snapshots
         // what it needs each frame (see BuildHudState) and hands it over.
@@ -170,6 +178,29 @@ namespace StoreChase
         private VertexPositionNormalColorTexture[] _propVerts = null!;
 
         private RunPhase _phase = RunPhase.Title;
+        private bool _paused;
+        private bool _showOptions;
+        private bool _timeAttackMode;
+        private bool _timeAttack;
+        private float _timeLeft;
+        private StoreLayout? _customLayout;
+        private bool _customRound;
+        private int _optionsSelection;
+        private int _rebindIndex = -1;
+        private string _rebindMessage = "";
+        // The two overlay strings are built on change, not per frame: the
+        // options panel is twenty lines of string building for a screen that
+        // only changes when the player touches it.
+        private string _optionsText = "";
+        private bool _optionsTextDirty = true;
+        private string? _pausedText;
+        private float _optionsRepeat;
+        private float _musicVolume = 1f;
+        private float _sfxVolume = 1f;
+        // True while the run in play came out of a save file, so the title
+        // screen can offer a way back out to a fresh run.
+        private bool _runResumed;
+        private List<(string Name, Func<Keys> Get, Action<Keys> Set)> _bindings = new();
 
     // Attract mode: after a few seconds idle on the title screen the game
     // plays a demo round by itself for a couple of minutes, then returns to
@@ -228,6 +259,16 @@ namespace StoreChase
 
         // Coins banked for a flawless round: nothing stolen, alarm never critical.
         public const int CleanRoundBonus = 25;
+
+        // Tackles it takes to retire the Boss Cat. Three reads as "a fight"
+        // without dragging the round out: each tackle costs the boss the loot
+        // it was carrying, so every hit is progress even before the last.
+        public const int BossHealth = 3;
+
+        // Coins for completing the shopping order, before the securing combo
+        // multiplier. Same scale as WinBonus, because it is the same kind of
+        // "you finished what was asked" payout.
+        public const int OrderBonus = 25;
 
         // How long a spill keeps the player sliding. Skates double it —
         // water and roller skates is a comedy combination, and the boost
@@ -296,13 +337,28 @@ namespace StoreChase
             _title = new RainbowTitle();
 
             new RunStats(EventSystem.Instance);
-            new AchievementTracker(EventSystem.Instance);
+            _achievements = new AchievementTracker(EventSystem.Instance);
             EventSystem.Instance.Subscribe<CatBefriendedEvent>(e =>
             {
                 // map species name back to kind — find via profile name match
                 foreach (var k in CritterProfile.AllKinds)
                     if (CritterProfile.For(k).Name == e.Species) { _roster.Befriend(k); break; }
             });
+
+            // Restore a saved run, if any, before the first round is built.
+            try
+            {
+                var savePath = SavePath();
+                if (System.IO.File.Exists(savePath))
+                {
+                    var loaded = CampaignState.Load(savePath);
+                    if (loaded != null) { _campaign = loaded; _runResumed = true; }
+                }
+            }
+            catch { /* fall back to a fresh run */ }
+
+            // Rebindings, likewise. A fresh install simply has no file.
+            InputMapper.LoadDefaults();
 
             // Synthesised up front so the first cue doesn't stutter. Safe to
             // fail: Sfx turns itself off when there's no audio device.
@@ -311,6 +367,8 @@ namespace StoreChase
             // The soundtrack likewise: it keys off Sfx.Available, so a
             // silent machine gets silence rather than a crash.
             Music.Start();
+
+            TryLoadCustomLayout();
 
             StartRound(false);
 
@@ -422,10 +480,25 @@ namespace StoreChase
             int coins = CampaignState.CoinsFor(item) * mult;
             _campaign.AddCoins(coins);
 
+            // Shopping order fulfilment: a secured item that the store asked
+            // for counts toward the bonus. Fulfilling the whole order pays out
+            // and announces it, once per round — Fulfill is the edge detector,
+            // so the payout cannot be paid twice.
+            if (_order.Fulfill(item.Kind))
+            {
+                int bonus = OrderBonus * mult;
+                _campaign.AddCoins(bonus);
+                _fx.Text(item.WorldPos + new Vector3(0f, 2.4f, 0f),
+                    $"ORDER COMPLETE  +{bonus}c", new Color(120, 230, 160), 2f);
+                _fx.Burst(item.WorldPos + new Vector3(0f, 1.2f, 0f),
+                    new Color(120, 230, 160), count: 18, speed: 2.8f, life: 1.0f, _rng);
+            }
+
             // The purse line: gold, rising off the item where it landed.
             _fx.Text(item.WorldPos + new Vector3(0f, 1.8f, 0f),
                 mult > 1 ? $"+{coins}c  x{mult}!" : $"+{coins}c",
                 new Color(245, 205, 110), 1.5f);
+            _camera.AddShake(0.08f);
             if (mult > 1) _fx.Burst(item.WorldPos + new Vector3(0f, 1.2f, 0f),
                 new Color(255, 230, 120), count: 12, speed: 2.5f, life: 0.9f, _rng);
         }
@@ -446,14 +519,28 @@ namespace StoreChase
         {
             var spec = _campaign.CurrentSpec;
 
+            // A custom store is a one-off: consume the flag here rather than
+            // leaving it set, or every later round silently replaces the
+            // campaign's store with it (there is no way back to the title
+            // screen from the between-rounds shop to clear it by hand).
+            bool customRound = _customRound;
+            _customRound = false;
+
+            StoreLayout layout = (customRound && _customLayout != null) ? _customLayout : spec.Layout;
+
+            _timeAttack = _timeAttackMode;
+            _paused = false;
+            _showOptions = false;
+            _timeLeft = _timeAttack ? 90f + spec.LootCount * 5f : 0f;
+
             // A new round can be a new store. The camera is sized to the
             // floor plan and the floor quad/minimap bake it, so they are
             // rebuilt here — guarded, because the very first round runs in
             // Initialize, before LoadContent has built any of them (LoadContent
             // then builds them from whatever layout this branch left behind).
-            if (_map == null || _map.Layout != spec.Layout)
+            if (_map == null || _map.Layout != layout)
             {
-                _map = new GridMap(spec.Layout);
+                _map = new GridMap(layout);
 
                 // ItemField holds the map it was built for, so a new store
                 // needs a new field. (The power-up and hazard fields take the
@@ -484,18 +571,47 @@ namespace StoreChase
             _catMeshes.Clear();
             _roster ??= new FriendRoster(_rng);
             int critterCount = Math.Max(1, spec.CritterCount + (_difficulty == Difficulty.Hard ? 1 : _difficulty == Difficulty.Easy ? -1 : 0));
+            int spawnIndex = 0;
             foreach (var cell in SpawnPoints(critterCount))
             {
                 var profile = CritterProfile.Random(_rng);
+                // Every fourth round (0-based round 3, 7, ...) features a
+                // Boss Cat: a bigger, tougher Moggy that takes three tackles.
+                // The flag is the boss's identity — everything downstream
+                // (name, health, the HUD's bar) reads it rather than matching
+                // on the display name, which is a presentation detail.
+                bool isBoss = spawnIndex == 0 && _campaign.RoundIndex % 4 == 3;
+                if (isBoss)
+                {
+                    var baseProfile = CritterProfile.For(CritterKind.Moggy);
+                    profile = baseProfile with
+                    {
+                        Name = "Boss Cat",
+                        Scale = 2.0f,
+                        Tint = new Color(200, 60, 60),
+                        MoveSpeed = 2.6f,
+                        VisionRadius = 14,
+                        AlertRadius = 14,
+                    };
+                }
                 var ai = new SmartAnimalAI(profile, _rng);
                 var critter = new Critter(cell, CellSize, ai, profile);
-                critter.Name = _roster.NameFor(profile.Kind);
+                critter.Name = isBoss ? profile.Name : _roster.NameFor(profile.Kind);
+                if (isBoss) critter.MakeBoss(BossHealth);
                 if (_roster.IsFriend(profile.Kind))
                     for (int i = 0; i < Critter.FriendThreshold; i++) critter.Feed();
                 _critters.Add(critter);
+                spawnIndex++;
             }
 
             _items.Spawn(spec.LootCount, _player.Cell);
+
+            // Build this round's shopping order: a handful of the goods the
+            // store actually wants back, for a bonus when fulfilled. It is a
+            // bonus objective on top of securing everything — the round is
+            // still won by clearing the shelves. ShoppingOrder picks the list
+            // from what actually spawned and caches the HUD line.
+            _order.Build(_items.Items, _rng);
 
             // One of each power-up, scattered away from the start. The pocket
             // starts empty every round — except for what the shop sold you:
@@ -515,6 +631,8 @@ namespace StoreChase
             _dayPhase = 0f;
             _rainTimer = 40f + (float)_rng.NextDouble() * 30f;
             _rainActive = 0f;
+            _fogTimer = 60f + (float)_rng.NextDouble() * 40f;
+            _fogActive = 0f;
             _traps.Clear();
             _laserTimer = 0f;
             _shift ??= new ShiftEventSystem(_rng);
@@ -849,11 +967,23 @@ namespace StoreChase
 
             if (input.Exit) Exit();
 
+            // Pause toggles during play.
+            if (_phase == RunPhase.Playing && input.Pause)
+            {
+                _paused = !_paused;
+                if (!_paused) _showOptions = false;
+                _pausedText = null;
+                _optionsTextDirty = true;
+            }
+
             // The camera is only live during play. On the attract screen it
             // was still being driven, so a stray wheel notch, tilt trigger or
             // V/Y press invisibly re-framed the store before the round began —
             // the player's first look at the store was a camera nobody set.
-            if (_phase != RunPhase.Title)
+            // Paused, it holds still: the frame is frozen, and letting tilt
+            // (O) keep running there would move the view the moment the
+            // options overlay opened, since O is also the tilt-up key.
+            if (_phase != RunPhase.Title && !_paused)
                 _camera.Update(gameTime, input, _player.WorldPos, _player.FacingAngle);
 
             // The juice layer ages in real time regardless of phase, so a
@@ -864,7 +994,7 @@ namespace StoreChase
             // music's only input. Between rounds it settles back to calm.
             Music.SetMood(_phase == RunPhase.Playing ? _alarm.Stage : AlarmStage.Calm);
 
-            if (_phase == RunPhase.Playing)
+            if (_phase == RunPhase.Playing && !_paused)
             {
                 _elapsedTime += (float)gameTime.ElapsedGameTime.TotalSeconds;
 
@@ -878,6 +1008,7 @@ namespace StoreChase
                         _attractMode = false;
                         _phase = RunPhase.Title;
                         _attractIdleTimer = 0f;
+
                         StartRound(false);
                         return;
                     }
@@ -886,6 +1017,7 @@ namespace StoreChase
                         _attractMode = false;
                         _phase = RunPhase.Title;
                         _attractIdleTimer = 0f;
+
                         StartRound(false);
                         return;
                     }
@@ -893,6 +1025,83 @@ namespace StoreChase
                 }
 
                 UpdatePlay(gameTime, input);
+            }
+            else if (_paused)
+            {
+                // Paused: no simulation, but options/rebind input is live.
+                _optionsRepeat = Math.Max(0f, _optionsRepeat - (float)gameTime.ElapsedGameTime.TotalSeconds);
+
+                // Toggle the options overlay.
+                if (input.LastKeyPressed == Keys.O)
+                {
+                    _showOptions = !_showOptions;
+                    _optionsTextDirty = true;
+                }
+
+                if (_showOptions)
+                {
+                    // Navigation.
+                    if (_optionsRepeat <= 0f)
+                    {
+                        if (input.Move.Y < 0) { _optionsSelection = Math.Max(0, _optionsSelection - 1); _optionsRepeat = 0.18f; _optionsTextDirty = true; }
+                        else if (input.Move.Y > 0) { _optionsSelection = Math.Min(BindingCount() + 1, _optionsSelection + 1); _optionsRepeat = 0.18f; _optionsTextDirty = true; }
+                    }
+
+                    // Volume adjust on the two volume rows.
+                    if (_optionsSelection == 0 && input.Move.X != 0 && _optionsRepeat <= 0f)
+                    {
+                        _musicVolume = MathHelper.Clamp(_musicVolume + input.Move.X * 0.1f, 0f, 1f);
+                        Music.Volume = _musicVolume;
+                        _optionsRepeat = 0.12f;
+                        _optionsTextDirty = true;
+                    }
+                    else if (_optionsSelection == 1 && input.Move.X != 0 && _optionsRepeat <= 0f)
+                    {
+                        _sfxVolume = MathHelper.Clamp(_sfxVolume + input.Move.X * 0.1f, 0f, 1f);
+                        Sfx.Volume = _sfxVolume;
+                        _optionsRepeat = 0.12f;
+                        _optionsTextDirty = true;
+                    }
+
+                    // Rebinding: confirm on a binding row starts capture; the
+                    // next key rebinds. Escape backs out — binding "quit" to
+                    // whatever the player was reaching for is not a kindness.
+                    if (_rebindIndex >= 0)
+                    {
+                        if (input.LastKeyPressed == Keys.Escape)
+                        {
+                            _rebindIndex = -1;
+                            _rebindMessage = "cancelled";
+                            _optionsTextDirty = true;
+                        }
+                        else if (input.LastKeyPressed != Keys.None && input.LastKeyPressed != Keys.Enter)
+                        {
+                            _rebindMessage = TryRebind(_rebindIndex, input.LastKeyPressed) ?? "saved";
+                            _rebindIndex = -1;
+                            _optionsTextDirty = true;
+                        }
+                    }
+                    else
+                    {
+                        int row = _optionsSelection - 2;
+                        if (row >= 0 && row < BindingCount() && input.Start)
+                        {
+                            _rebindIndex = row;
+                            _rebindMessage = "";
+                            _optionsTextDirty = true;
+                        }
+                    }
+                }
+
+                // Resume with P handled above; R restarts.
+                if (input.Restart)
+                {
+                    _paused = false;
+                    _showOptions = false;
+                    if (_phase == RunPhase.Won) _campaign.Advance();
+                    StartRound();
+                    return;
+                }
             }
             else if (_phase == RunPhase.Title)
             {
@@ -910,8 +1119,27 @@ namespace StoreChase
                     return;
                 }
 
+                // T toggles Time Attack mode on the title screen.
+                if (input.LastKeyPressed == Keys.T) _timeAttackMode = !_timeAttackMode;
+
+                // A resumed run resumes until it is explicitly abandoned, or
+                // the only way out of it is deleting a file by hand.
+                if (input.LastKeyPressed == Keys.N && _runResumed) StartFreshRun();
+
+                // L launches a custom store (if custom_store.txt was found).
+                if (input.LastKeyPressed == Keys.L && _customLayout != null)
+                {
+                    _customRound = true;
+                    StartRound();
+                    return;
+                }
+
                 // Either confirm button...
-                if (input.Start || input.Restart) StartRound();
+                if (input.Start || input.Restart)
+                {
+                    _customRound = false;
+                    StartRound();
+                }
             }
             else
             {
@@ -1088,6 +1316,23 @@ namespace StoreChase
                         "Rain!", new Color(140, 170, 210), 1.4f);
                 }
             }
+
+            // Fog: a slow, store-wide haze that softens vision.
+            if (_fogActive > 0f)
+            {
+                _fogActive -= dt;
+            }
+            else
+            {
+                _fogTimer -= dt;
+                if (_fogTimer <= 0f)
+                {
+                    _fogActive = 12f;
+                    _fogTimer = 70f + (float)_rng.NextDouble() * 50f;
+                    _fx.Text(_player.WorldPos + new Vector3(0f, 2.2f, 0f),
+                        "Fog rolls in...", new Color(180, 190, 205), 1.4f);
+                }
+            }
             // Skates multiply with the Fast shoes upgrade: the shop's boost
             // is a factor of whatever baseline the campaign has bought.
             _player.SpeedMultiplier = (_skateTimer > 0f ? SkatesSpeedBoost : 1f)
@@ -1257,6 +1502,17 @@ namespace StoreChase
             _alarm.Update(dt, _items.StolenWeight, _items.Held != null, _items.AllSecured);
             if (_alarm.Stage == AlarmStage.Critical) _roundAlarmCritical = true;
             UpdateAlarmAudio(dt);
+
+            if (_timeAttack && _timeLeft > 0f)
+            {
+                _timeLeft -= dt;
+                if (_timeLeft <= 0f)
+                {
+                    _timeLeft = 0f;
+                    EndRound(RunPhase.Lost, "Time's up!");
+                    return;
+                }
+            }
 
             if (_alarm.Tripped)
             {
@@ -1534,9 +1790,6 @@ namespace StoreChase
                     bool hadLoot = critter.Carrying;
                     _items.DropFrom(critter, critter.Cell);
                     critter.Carrying = false;
-                    _critters.RemoveAt(i);
-                    _catAnims.Remove(critter);
-                    _catMeshes.Remove(critter);
                     Sfx.Play(SfxId.Tackle, volume: 0.7f);
 
                     // The signature punch of the game: a beat of freeze, a
@@ -1555,6 +1808,24 @@ namespace StoreChase
                         // a little so a clean tackle feels like progress.
                         _alarm.Ping();
                     }
+
+                    // Boss critters take several tackles: drop loot and stun,
+                    // but stay in the game until their health runs out. The
+                    // critter owns the arithmetic (and the "was that the last
+                    // one" answer), so this reads the result rather than
+                    // poking at health.
+                    if (critter.IsBoss && !critter.TakeTackleDamage())
+                    {
+                        critter.ResetTackle();
+                        critter.Stun(2.5f);
+                        _fx.Text(critter.WorldPos + new Vector3(0f, 2.4f, 0f),
+                            $"Boss: {critter.Health}/{critter.MaxHealth}", new Color(255, 120, 120), 1.6f);
+                        continue;
+                    }
+
+                    _critters.RemoveAt(i);
+                    _catAnims.Remove(critter);
+                    _catMeshes.Remove(critter);
                 }
             }
         }
@@ -1581,6 +1852,7 @@ namespace StoreChase
             // the shift's stealth window.
             float vision = critter.Profile.VisionRadius
                            * (_darkTimer > 0f ? DarkVisionFactor : 1f)
+                           * (_fogActive > 0f ? 0.8f : 1f)
                            * (_player.IsCrouching ? 0.5f : 1f);
             bool couldSee = dist <= vision &&
                             _map.HasLineOfSight(critter.Cell, _player.Cell);
@@ -1915,6 +2187,9 @@ namespace StoreChase
                 _campaign.RecordLoss();
             }
 
+            // Persist the run so a restart of the game can continue it.
+            try { _campaign.Save(SavePath()); } catch { /* never block the game */ }
+
             Sfx.Play(phase == RunPhase.Won ? SfxId.Win : SfxId.Lose, volume: 0.8f);
             if (phase == RunPhase.Won)
                 EventSystem.Instance.Publish(new GameWonEvent(_elapsedTime));
@@ -1946,6 +2221,7 @@ namespace StoreChase
                 Sfx.Play(SfxId.Coin, volume: 0.55f);
                 _fx.Text(_player.WorldPos + new Vector3(0f, 2f, 0f),
                     $"bought {item.Name}", new Color(245, 205, 110), 1.4f);
+                try { _campaign.Save(SavePath()); } catch { }
             }
             else
             {
@@ -1982,6 +2258,7 @@ namespace StoreChase
                 // Day/night: a slow brightness pulse, dimmer at "night".
                 float day = 0.85f + 0.15f * MathF.Sin(_dayPhase * MathF.Tau);
                 if (_rainActive > 0f) day *= 0.9f;
+                if (_fogActive > 0f) day *= 0.75f;
                 _effect.AmbientLightColor = AmbientForAlarm(_alarm.Level) * light * day;
                 // No specular on the store. BasicEffect's three directional
                 // lights all carry a white specular term, and the material
@@ -2484,6 +2761,133 @@ namespace StoreChase
         // read-only: it draws the state, it never writes it back. Passing a
         // snapshot rather than the subsystems themselves is what keeps the
         // HUD from reaching into the game.
+        private void TryLoadCustomLayout()
+        {
+            // Parsing and validation live in CustomStore, so a rejected file
+            // says why instead of silently not appearing in the HUD.
+            _customLayout = CustomStore.Load(CustomStore.FileName, out string? error);
+            if (_customLayout == null && error != "not found")
+                Console.WriteLine($"Custom store: {error}");
+        }
+
+        private static string SavePath() =>
+            System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "StoreChase", "run.json");
+
+        private void EnsureBindings()
+        {
+            if (_bindings.Count > 0) return;
+            var m = InputMapper.Default;
+            _bindings.Add(("Move up", () => m.MoveUp, v => m.MoveUp = v));
+            _bindings.Add(("Move down", () => m.MoveDown, v => m.MoveDown = v));
+            _bindings.Add(("Move left", () => m.MoveLeft, v => m.MoveLeft = v));
+            _bindings.Add(("Move right", () => m.MoveRight, v => m.MoveRight = v));
+            _bindings.Add(("Pan up", () => m.PanUp, v => m.PanUp = v));
+            _bindings.Add(("Pan down", () => m.PanDown, v => m.PanDown = v));
+            _bindings.Add(("Pan left", () => m.PanLeft, v => m.PanLeft = v));
+            _bindings.Add(("Pan right", () => m.PanRight, v => m.PanRight = v));
+            _bindings.Add(("Tilt up", () => m.TiltUp, v => m.TiltUp = v));
+            _bindings.Add(("Tilt down", () => m.TiltDown, v => m.TiltDown = v));
+            _bindings.Add(("Toggle camera", () => m.ToggleCamera, v => m.ToggleCamera = v));
+            _bindings.Add(("Throw", () => m.Throw, v => m.Throw = v));
+            _bindings.Add(("Use", () => m.Use, v => m.Use = v));
+            _bindings.Add(("Crouch", () => m.Crouch, v => m.Crouch = v));
+            _bindings.Add(("Restart", () => m.Restart, v => m.Restart = v));
+            _bindings.Add(("Pause", () => m.Pause, v => m.Pause = v));
+        }
+
+        private int BindingCount() { EnsureBindings(); return _bindings.Count; }
+
+        /// <summary>
+        /// Throws the resumed run away: a fresh campaign, no save file. The
+        /// purse and the round index survive only because the game saved them,
+        /// so a player who wants the long way round has to be able to say so
+        /// from the title screen.
+        /// </summary>
+        private void StartFreshRun()
+        {
+            try { System.IO.File.Delete(SavePath()); }
+            catch { /* nothing to delete, or not deletable: either way we carry on */ }
+
+            _campaign = new CampaignState();
+            _runResumed = false;
+            _fx.Text(_player.WorldPos + new Vector3(0f, 2.2f, 0f),
+                "New run", new Color(150, 220, 255), 1.4f);
+        }
+
+        /// <summary>
+        /// Applies a rebind, or explains why it was refused. A refused rebind
+        /// is a message, not a silent no-op: the player has to be able to see
+        /// that the key they picked is already doing something else.
+        /// </summary>
+        private string? TryRebind(int index, Keys key)
+        {
+            EnsureBindings();
+            if (index < 0 || index >= _bindings.Count) return "no such binding";
+
+            // A key that another row already owns is refused rather than
+            // stolen: two actions on one key means one of them silently stops
+            // working, and which one depends on the order the input layer
+            // happens to read them in.
+            var clash = _bindings.Select((b, i) => (b, i))
+                                 .FirstOrDefault(t => t.i != index && t.b.Get() == key);
+            if (clash.b.Get != null && clash.b.Get() == key)
+                return $"'{key}' is already {clash.b.Name}";
+
+            // Keys the rebind screen does not list but the game still acts on
+            // (the arrow-key alternates, Start, Exit, the shop slots) are just
+            // as protected.
+            var taken = InputMapper.Default.HiddenKeys.FirstOrDefault(r => r.Key == key);
+            if (taken.Name != null && taken.Key == key)
+                return $"'{key}' is already {taken.Name}";
+
+            _bindings[index].Set(key);
+            InputMapper.SaveDefaults();
+            return null;
+        }
+
+        private string BuildPausedText()
+        {
+            // The panel only changes when a win lands, so it is built once per
+            // pause rather than re-joined 60 times a second.
+            if (_pausedText != null) return _pausedText;
+
+            string fastest = _achievements.FastestWin < float.MaxValue
+                ? $"{_achievements.FastestWin:F1}s" : "none";
+            _pausedText = $"PAUSED\n\n" +
+                          $"Achievements: {_achievements.Unlocked.Count}/{_achievements.Total}\n" +
+                          $"Fastest win: {fastest}\n\n" +
+                          "P resume   R restart   Esc quit   O options";
+            return _pausedText;
+        }
+
+        private string BuildOptionsText()
+        {
+            if (!_optionsTextDirty && _optionsText != null) return _optionsText;
+
+            EnsureBindings();
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(_paused ? "PAUSED" : "");
+            sb.AppendLine($"Music volume: {(int)(_musicVolume * 10)}  (left/right)");
+            sb.AppendLine($"Sfx volume:   {(int)(_sfxVolume * 10)}  (left/right)");
+            sb.AppendLine("");
+            sb.AppendLine("Bindings (Enter to rebind):");
+            for (int i = 0; i < _bindings.Count; i++)
+            {
+                string sel = (i + 2 == _optionsSelection) ? "> " : "  ";
+                string wait = (_rebindIndex == i) ? "  [press a key]" : "";
+                sb.AppendLine($"{sel}{_bindings[i].Name}: {_bindings[i].Get()}{wait}");
+            }
+            if (!string.IsNullOrEmpty(_rebindMessage))
+                sb.AppendLine($"  ({_rebindMessage})");
+            sb.AppendLine("");
+            sb.AppendLine("P resume   R restart   Esc quit   O close options");
+            _optionsText = sb.ToString();
+            _optionsTextDirty = false;
+            return _optionsText;
+        }
+
         private HudState BuildHudState() => new(
             Phase: _phase,
             ElapsedTime: _elapsedTime,
@@ -2508,6 +2912,15 @@ namespace StoreChase
             // while skating). Only the HUD reads this scale.
             Noise: Math.Clamp(_noise.CurrentLoudness / NoiseHudScale, 0f, 1f),
             Combo: _combo.Combo,
+            TimeAttack: _timeAttack,
+            TimeLeft: _timeLeft,
+            TimeAttackMode: _timeAttackMode,
+            CustomStoreAvailable: _customLayout != null,
+            OrderText: _order.Text,
+            OrderComplete: _order.Complete,
+            Paused: _paused,
+            OptionsText: _paused && _showOptions ? BuildOptionsText() : (_paused ? BuildPausedText() : ""),
+            RunResumed: _runResumed,
             BoostSecondsLeft: _skateTimer,
             Popups: _fx.Texts,
             Coins: _campaign.Coins,

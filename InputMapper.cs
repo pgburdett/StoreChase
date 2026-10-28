@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework.Input;
 
 namespace StoreChase;
@@ -66,8 +69,32 @@ public sealed class InputMapper
     /// <summary>Restart the round (held, not an edge — matches InputState.Restart).</summary>
     public Keys Restart = Keys.R;
 
+    /// <summary>Pause the game (rising edge).</summary>
+    public Keys Pause = Keys.P;
+
     /// <summary>Exit the game (held).</summary>
     public Keys Exit = Keys.Escape;
+
+    /// <summary>
+    /// The bindings the rebind screen does *not* offer but the game still acts
+    /// on, with names for the refusal message: the arrow-key alternates, the
+    /// confirm keys, quit, and the shop slots.
+    ///
+    /// Rebinding checks against these, so you cannot bind "Move up" onto the
+    /// key that buys a shop slot and lose one of the two in silence. Living
+    /// here rather than in the screen means adding a key adds it to the
+    /// protected set automatically.
+    /// </summary>
+    public IEnumerable<(string Name, Keys Key)> HiddenKeys => new List<(string Name, Keys Key)>
+    {
+        ("Move up (arrows)", MoveUpAlt),
+        ("Move down (arrows)", MoveDownAlt),
+        ("Move left (arrows)", MoveLeftAlt),
+        ("Move right (arrows)", MoveRightAlt),
+        ("Confirm", Start),
+        ("Confirm (alt)", StartAlt),
+        ("Quit", Exit),
+    }.Concat(BuySlots.Select((k, i) => (Name: $"Shop slot {i + 1}", Key: k)));
 
     /// <summary>Shop buy slots, 1-based index order (D1..D9 → slots 1..9).</summary>
     public Keys[] BuySlots =
@@ -85,4 +112,121 @@ public sealed class InputMapper
     public Buttons UsePad = Buttons.B;
     public Buttons StartPad = Buttons.Start;
     public Buttons ExitPad = Buttons.Back;
+
+    /// <summary>Pause (and, while paused, the options screen). The stick click
+    /// is the one button no other action uses.</summary>
+    public Buttons PausePad = Buttons.LeftStick;
+
+    // --- Persistence ------------------------------------------------------
+
+    /// <summary>Where rebindings are kept, next to the other saves.</summary>
+    public static string PersistPath { get; } = System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "StoreChase", "controls.json");
+
+    /// <summary>
+    /// Restores <see cref="Default"/> from disk, if there is a file. Silent
+    /// failure: unreadable bindings are not worth a crash over, and the
+    /// shipping scheme is a perfectly good fallback.
+    /// </summary>
+    public static void LoadDefaults()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(PersistPath)) return;
+            var json = System.IO.File.ReadAllText(PersistPath);
+            Dictionary<string, string>? saved =
+                System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            if (saved == null) return;
+            Default.Apply(saved);
+        }
+        catch { /* keep the shipping scheme */ }
+    }
+
+    /// <summary>Writes the current bindings so they survive a restart.</summary>
+    public static void SaveDefaults()
+    {
+        try
+        {
+            var data = Default.Snapshot();
+            System.IO.Directory.CreateDirectory(
+                System.IO.Path.GetDirectoryName(PersistPath)!);
+            System.IO.File.WriteAllText(PersistPath,
+                System.Text.Json.JsonSerializer.Serialize(data));
+        }
+        catch { /* best effort: rebindings just don't persist */ }
+    }
+
+    /// <summary>The bindable keys, as names → key names, for saving.</summary>
+    public Dictionary<string, string> Snapshot() => new()
+    {
+        [nameof(MoveUp)] = MoveUp.ToString(),
+        [nameof(MoveDown)] = MoveDown.ToString(),
+        [nameof(MoveLeft)] = MoveLeft.ToString(),
+        [nameof(MoveRight)] = MoveRight.ToString(),
+        [nameof(MoveUpAlt)] = MoveUpAlt.ToString(),
+        [nameof(MoveDownAlt)] = MoveDownAlt.ToString(),
+        [nameof(MoveLeftAlt)] = MoveLeftAlt.ToString(),
+        [nameof(MoveRightAlt)] = MoveRightAlt.ToString(),
+        [nameof(PanUp)] = PanUp.ToString(),
+        [nameof(PanDown)] = PanDown.ToString(),
+        [nameof(PanLeft)] = PanLeft.ToString(),
+        [nameof(PanRight)] = PanRight.ToString(),
+        [nameof(TiltUp)] = TiltUp.ToString(),
+        [nameof(TiltDown)] = TiltDown.ToString(),
+        [nameof(ToggleCamera)] = ToggleCamera.ToString(),
+        [nameof(Throw)] = Throw.ToString(),
+        [nameof(Use)] = Use.ToString(),
+        [nameof(Crouch)] = Crouch.ToString(),
+        [nameof(Start)] = Start.ToString(),
+        [nameof(StartAlt)] = StartAlt.ToString(),
+        [nameof(Restart)] = Restart.ToString(),
+        [nameof(Pause)] = Pause.ToString(),
+        [nameof(Exit)] = Exit.ToString(),
+        [nameof(BuySlots)] = string.Join(",", BuySlots.Select(b => b.ToString())),
+    };
+
+    /// <summary>
+    /// Applies saved bindings by name. Unknown names and unparsable keys are
+    /// ignored, so a file from a different version of the scheme degrades to
+    /// the defaults instead of failing to load.
+    /// </summary>
+    public void Apply(Dictionary<string, string> saved)
+    {
+        foreach (var kv in saved)
+        {
+            if (!Enum.TryParse(kv.Value, out Keys key)) continue;
+            switch (kv.Key)
+            {
+                case nameof(MoveUp): MoveUp = key; break;
+                case nameof(MoveDown): MoveDown = key; break;
+                case nameof(MoveLeft): MoveLeft = key; break;
+                case nameof(MoveRight): MoveRight = key; break;
+                case nameof(MoveUpAlt): MoveUpAlt = key; break;
+                case nameof(MoveDownAlt): MoveDownAlt = key; break;
+                case nameof(MoveLeftAlt): MoveLeftAlt = key; break;
+                case nameof(MoveRightAlt): MoveRightAlt = key; break;
+                case nameof(PanUp): PanUp = key; break;
+                case nameof(PanDown): PanDown = key; break;
+                case nameof(PanLeft): PanLeft = key; break;
+                case nameof(PanRight): PanRight = key; break;
+                case nameof(TiltUp): TiltUp = key; break;
+                case nameof(TiltDown): TiltDown = key; break;
+                case nameof(ToggleCamera): ToggleCamera = key; break;
+                case nameof(Throw): Throw = key; break;
+                case nameof(Use): Use = key; break;
+                case nameof(Crouch): Crouch = key; break;
+                case nameof(Start): Start = key; break;
+                case nameof(StartAlt): StartAlt = key; break;
+                case nameof(Restart): Restart = key; break;
+                case nameof(Pause): Pause = key; break;
+                case nameof(Exit): Exit = key; break;
+                case nameof(BuySlots):
+                    var slots = kv.Value.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < BuySlots.Length && i < slots.Length; i++)
+                        if (Enum.TryParse(slots[i], out key)) BuySlots[i] = key;
+                    break;
+            }
+        }
+    }
 }

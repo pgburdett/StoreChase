@@ -125,6 +125,16 @@ public static class Sfx
         }
     }
 
+    private static float _volume = 1f;
+
+    /// <summary>Master volume for sound effects, 0..1. Scales every cue's own
+    /// volume, so a per-cue balance survives moving the master.</summary>
+    public static float Volume
+    {
+        get => _volume;
+        set => _volume = MathHelper.Clamp(value, 0f, 1f);
+    }
+
     /// <summary>Plays a sound cue. No-op if the audio system is unavailable.</summary>
     public static void Play(SfxId id, float volume = 1f, float pitch = 0f, float pan = 0f)
     {
@@ -138,7 +148,7 @@ public static class Sfx
             float jitter = pitch + ((id == SfxId.AlarmBlip || id == SfxId.Bounce)
                 ? (float)(Random.Shared.NextDouble() * 0.12 - 0.06)
                 : 0f);
-            sound.Play(MathHelper.Clamp(volume, 0f, 1f), MathHelper.Clamp(jitter, -1f, 1f), pan);
+            sound.Play(MathHelper.Clamp(volume * _volume, 0f, 1f), MathHelper.Clamp(jitter, -1f, 1f), pan);
         }
         catch
         {

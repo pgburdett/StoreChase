@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Input;
 
 namespace StoreChase;
 
@@ -48,6 +49,9 @@ public readonly struct InputState
     /// <summary>Start the game / confirm. Rising edge.</summary>
     public bool Start { get; init; }
 
+    /// <summary>Pause the game. Rising edge.</summary>
+    public bool Pause { get; init; }
+
     /// <summary>True while the player is crouching (stealth).</summary>
     public bool Crouch { get; init; }
 
@@ -55,6 +59,10 @@ public readonly struct InputState
     /// (0 = none). Only meaningful between rounds, when the shop is open.
     /// Rising edge, so one press buys one item.</summary>
     public int BuySlot { get; init; }
+
+    /// <summary>The last keyboard key pressed this frame (Keys.None if none),
+    /// for UIs that need raw key capture (e.g. rebinding). Keyboard only.</summary>
+    public Keys LastKeyPressed { get; init; }
 
     /// <summary>A neutral (all-zero) input state, used when no device is connected.</summary>
     public static InputState Neutral => default;
@@ -69,9 +77,11 @@ public readonly struct InputState
         Look != Vector2.Zero ||
         ToggleCamera ||
         Restart ||
+        Pause ||
         Exit ||
         Throw ||
         Use ||
         Start ||
-        BuySlot != 0;
+        BuySlot != 0 ||
+        LastKeyPressed != Keys.None;
 }

@@ -34,6 +34,38 @@ public class Critter
     /// to end the encounter and make it drop whatever it was carrying.</summary>
     public bool Tackled { get; private set; }
 
+    /// <summary>Health for boss critters (1 for normal cats). A tackle
+    /// decrements this; the critter is only removed at zero.</summary>
+    public int Health { get; private set; } = 1;
+
+    /// <summary>Maximum health, which the HUD draws as a boss bar.</summary>
+    public int MaxHealth { get; private set; } = 1;
+
+    /// <summary>True for boss critters that take multiple tackles.</summary>
+    public bool IsBoss { get; private set; }
+
+    /// <summary>
+    /// Promotes this critter to a boss: <paramref name="health"/> tackles to
+    /// retire, starting at full. Setting max and current together keeps the
+    /// "hurt but alive" state from being reachable as a spawn condition.
+    /// </summary>
+    public void MakeBoss(int health)
+    {
+        IsBoss = true;
+        MaxHealth = Math.Max(1, health);
+        Health = MaxHealth;
+    }
+
+    /// <summary>Clears the tackled flag so a boss can be tackled again.</summary>
+    public void ResetTackle() => Tackled = false;
+
+    /// <summary>One tackle's worth of damage. True when this was the last.</summary>
+    public bool TakeTackleDamage()
+    {
+        Health = Math.Max(0, Health - 1);
+        return Health <= 0;
+    }
+
     /// <summary>Whether this critter is currently holding stolen goods.</summary>
     public bool Carrying { get; set; }
 
