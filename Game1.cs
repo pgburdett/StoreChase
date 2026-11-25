@@ -5,6 +5,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using StoreChase.Scripting;
 
 namespace StoreChase
 {
@@ -110,6 +111,13 @@ namespace StoreChase
         // between rounds. Survives rounds — only StartRound reads it, so the
         // campaign itself stays headless (see Campaign.cs).
         private CampaignState _campaign = new();
+
+        // Scripting: optional scripted AI and campaign progression
+        private ScriptedCampaign? _scriptedCampaign;
+        private string? _scriptedAIPath;
+        private string? _scriptedCampaignPath;
+        private bool _useScriptedAI;
+        private bool _useScriptedCampaign;
 
         private BasicEffect _effect = null!;
         private Camera _camera = null!;
@@ -324,6 +332,13 @@ namespace StoreChase
                 _rng = new Random(seed);
                 _difficulty = Difficulty.Hard;
             }
+
+            // Scripting configuration via environment variables
+            _scriptedAIPath = Environment.GetEnvironmentVariable("SC_SCRIPT_AI");
+            _useScriptedAI = !string.IsNullOrEmpty(_scriptedAIPath);
+
+            _scriptedCampaignPath = Environment.GetEnvironmentVariable("SC_SCRIPT_CAMPAIGN");
+            _useScriptedCampaign = !string.IsNullOrEmpty(_scriptedCampaignPath);
         }
 
         protected override void Initialize()
@@ -336,6 +351,9 @@ namespace StoreChase
 
             _title = new RainbowTitle();
 
+            // Initialize scripting services (RNG, EventSystem, logging)
+            ScriptServices.Initialize(_rng, EventSystem.Instance, msg => Console.WriteLine(msg));
+
             new RunStats(EventSystem.Instance);
             _achievements = new AchievementTracker(EventSystem.Instance);
             EventSystem.Instance.Subscribe<CatBefriendedEvent>(e =>
@@ -344,6 +362,21 @@ namespace StoreChase
                 foreach (var k in CritterProfile.AllKinds)
                     if (CritterProfile.For(k).Name == e.Species) { _roster.Befriend(k); break; }
             });
+
+            // Load scripted campaign if enabled
+            if (_useScriptedCampaign && _scriptedCampaignPath != null)
+            {
+                try
+                {
+                    _scriptedCampaign = new ScriptedCampaign(_scriptedCampaignPath);
+                    Console.WriteLine($"[Scripting] Loaded campaign: {_scriptedCampaignPath}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Scripting] Failed to load campaign script: {ex.Message}");
+                    _useScriptedCampaign = false;
+                }
+            }
 
             // Restore a saved run, if any, before the first round is built.
             try
@@ -517,7 +550,28 @@ namespace StoreChase
         /// </summary>
         private void StartRound(bool startPlaying = true)
         {
-            var spec = _campaign.CurrentSpec;
+            // Get round spec from scripted campaign or default campaign
+            RoundSpec spec;
+            StoreLayout layout;
+            
+            if (_useScriptedCampaign && _scriptedCampaign != null)
+            {
+                _scriptedCampaign.OnRoundStart(_campaign);
+                spec = _scriptedCampaign.SpecFor(_campaign.RoundIndex);
+                layout = _scriptedCampaign.LayoutFor(_campaign.RoundIndex);
+                
+                // Update campaign's shop from script if it provides one
+                var scriptShop = _scriptedCampaign.CreateShop();
+                if (scriptShop != null)
+                {
+                    // ShopCatalog is immutable-ish, so we'd need to replace it
+                    // For now, the scripted campaign's shop is used in TryBuySlot
+                }
+            }
+            else
+            {
+                spec = _campaign.CurrentSpec;
+            }
 
             // A custom store is a one-off: consume the flag here rather than
             // leaving it set, or every later round silently replaces the
@@ -526,7 +580,7 @@ namespace StoreChase
             bool customRound = _customRound;
             _customRound = false;
 
-            StoreLayout layout = (customRound && _customLayout != null) ? _customLayout : spec.Layout;
+            layout = (customRound && _customLayout != null) ? _customLayout : spec.Layout;
 
             _timeAttack = _timeAttackMode;
             _paused = false;
@@ -594,7 +648,26 @@ namespace StoreChase
                         AlertRadius = 14,
                     };
                 }
-                var ai = new SmartAnimalAI(profile, _rng);
+
+                // Use scripted AI if enabled, otherwise default SmartAnimalAI
+                ICritterAI ai;
+                if (_useScriptedAI && _scriptedAIPath != null)
+                {
+                    try
+                    {
+                        ai = new ScriptedAI(profile, _rng, _scriptedAIPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[Scripting] Failed to load AI script, falling back: {ex.Message}");
+                        ai = new SmartAnimalAI(profile, _rng);
+                    }
+                }
+                else
+                {
+                    ai = new SmartAnimalAI(profile, _rng);
+                }
+
                 var critter = new Critter(cell, CellSize, ai, profile);
                 critter.Name = isBoss ? profile.Name : _roster.NameFor(profile.Kind);
                 if (isBoss) critter.MakeBoss(BossHealth);
@@ -2185,6 +2258,12 @@ namespace StoreChase
             else
             {
                 _campaign.RecordLoss();
+            }
+
+            // Notify scripted campaign
+            if (_useScriptedCampaign && _scriptedCampaign != null)
+            {
+                _scriptedCampaign.OnRoundEnd(_campaign, phase == RunPhase.Won);
             }
 
             // Persist the run so a restart of the game can continue it.
